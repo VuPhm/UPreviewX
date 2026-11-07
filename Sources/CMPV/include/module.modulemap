@@ -1,0 +1,4 @@
+module CMPV [system] {
+    header "mpv_shim.h"
+    export *
+}

@@ -1,0 +1,32 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build-and-test:
+    name: Build & Test (macOS x86_64)
+    runs-on: macos-14
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install libmpv via Homebrew (CI only)
+        run: |
+          if ! brew list mpv >/dev/null 2>&1; then
+            brew install mpv
+          fi
+
+      - name: Prepare x86_64 runtime libraries
+        run: |
+          # On arm64 GitHub runners, allow building/testing with available arch or x86_64
+          ./Scripts/prepare_libs.sh
+
+      - name: Build & Package UPreviewX
+        run: |
+          HOST_ARCH="$(uname -m)"
+          swift build -c release --arch "${HOST_ARCH}"
+          swift test --arch "${HOST_ARCH}"
