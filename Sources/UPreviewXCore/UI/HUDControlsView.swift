@@ -24,6 +24,7 @@ public final class TimelineSlider: NSSlider {
 }
 
 /// Unobtrusive floating HUD control bar modelled after the native macOS QuickTime / QuickLook preview bar.
+/// Designed to compress cleanly inside narrow portrait (9:16) windows without forcing side bars.
 public final class HUDControlsView: NSVisualEffectView {
     public var onPlayPause: (() -> Void)?
     public var onSeek: ((Double, Bool) -> Void)?
@@ -67,22 +68,26 @@ public final class HUDControlsView: NSVisualEffectView {
         configureIconButton(playPauseButton, symbolName: "pause.fill", toolTip: "Play / Pause (Space)", action: #selector(handlePlayPause))
 
         // Time Labels
-        let timeFont = NSFont.monospacedDigitSystemFont(ofSize: 11.5, weight: .medium)
+        let timeFont = NSFont.monospacedDigitSystemFont(ofSize: 11.0, weight: .medium)
         currentTimeLabel.font = timeFont
         currentTimeLabel.textColor = .white
         currentTimeLabel.alignment = .right
         currentTimeLabel.setContentHuggingPriority(.required, for: .horizontal)
+        currentTimeLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
 
         durationLabel.font = timeFont
         durationLabel.textColor = NSColor.white.withAlphaComponent(0.75)
         durationLabel.alignment = .left
         durationLabel.setContentHuggingPriority(.required, for: .horizontal)
+        durationLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
 
         // Timeline Slider
         timelineSlider.isContinuous = true
         timelineSlider.controlSize = .small
         timelineSlider.target = self
         timelineSlider.action = #selector(handleTimelineAction(_:))
+        timelineSlider.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        timelineSlider.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         timelineSlider.onScrubChanged = { [weak self] value, isFinal in
             self?.currentTimeLabel.stringValue = TimeFormatter.format(seconds: value)
             self?.onSeek?(value, isFinal)
@@ -96,7 +101,10 @@ public final class HUDControlsView: NSVisualEffectView {
         volumeSlider.target = self
         volumeSlider.action = #selector(handleVolumeAction(_:))
         volumeSlider.translatesAutoresizingMaskIntoConstraints = false
-        volumeSlider.widthAnchor.constraint(equalToConstant: 64).isActive = true
+        let volWidth = volumeSlider.widthAnchor.constraint(equalToConstant: 48)
+        volWidth.priority = .defaultHigh
+        volWidth.isActive = true
+        volumeSlider.widthAnchor.constraint(greaterThanOrEqualToConstant: 32).isActive = true
 
         // Diagnostics & Fullscreen Buttons
         configureIconButton(diagButton, symbolName: "gauge.with.dots.needle.bottom.50percent", toolTip: "Toggle Decoder Diagnostics (D / Cmd+I)", action: #selector(handleDiagnostics))
@@ -114,8 +122,8 @@ public final class HUDControlsView: NSVisualEffectView {
         ])
         stack.orientation = .horizontal
         stack.alignment = .centerY
-        stack.spacing = 10
-        stack.edgeInsets = NSEdgeInsets(top: 8, left: 14, bottom: 8, right: 14)
+        stack.spacing = 7
+        stack.edgeInsets = NSEdgeInsets(top: 7, left: 10, bottom: 7, right: 10)
         stack.translatesAutoresizingMaskIntoConstraints = false
 
         addSubview(stack)
@@ -124,8 +132,9 @@ public final class HUDControlsView: NSVisualEffectView {
             stack.trailingAnchor.constraint(equalTo: trailingAnchor),
             stack.topAnchor.constraint(equalTo: topAnchor),
             stack.bottomAnchor.constraint(equalTo: bottomAnchor),
-            currentTimeLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 42),
-            durationLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 42)
+            timelineSlider.widthAnchor.constraint(greaterThanOrEqualToConstant: 56),
+            currentTimeLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 36),
+            durationLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 36)
         ])
     }
 
@@ -138,13 +147,15 @@ public final class HUDControlsView: NSVisualEffectView {
         button.target = self
         button.action = action
         if let img = NSImage(systemSymbolName: symbolName, accessibilityDescription: toolTip) {
-            let config = NSImage.SymbolConfiguration(pointSize: 13, weight: .semibold)
+            let config = NSImage.SymbolConfiguration(pointSize: 12.5, weight: .semibold)
             button.image = img.withSymbolConfiguration(config)
         }
         button.translatesAutoresizingMaskIntoConstraints = false
+        button.setContentHuggingPriority(.required, for: .horizontal)
+        button.setContentCompressionResistancePriority(.required, for: .horizontal)
         NSLayoutConstraint.activate([
-            button.widthAnchor.constraint(equalToConstant: 26),
-            button.heightAnchor.constraint(equalToConstant: 26)
+            button.widthAnchor.constraint(equalToConstant: 24),
+            button.heightAnchor.constraint(equalToConstant: 24)
         ])
     }
 
@@ -161,7 +172,7 @@ public final class HUDControlsView: NSVisualEffectView {
     public func updatePauseState(isPaused: Bool) {
         let symbol = isPaused ? "play.fill" : "pause.fill"
         if let img = NSImage(systemSymbolName: symbol, accessibilityDescription: isPaused ? "Play" : "Pause") {
-            let config = NSImage.SymbolConfiguration(pointSize: 13, weight: .semibold)
+            let config = NSImage.SymbolConfiguration(pointSize: 12.5, weight: .semibold)
             playPauseButton.image = img.withSymbolConfiguration(config)
         }
     }
@@ -177,7 +188,7 @@ public final class HUDControlsView: NSVisualEffectView {
             symbol = "speaker.wave.2.fill"
         }
         if let img = NSImage(systemSymbolName: symbol, accessibilityDescription: "Volume") {
-            let config = NSImage.SymbolConfiguration(pointSize: 13, weight: .semibold)
+            let config = NSImage.SymbolConfiguration(pointSize: 12.5, weight: .semibold)
             muteButton.image = img.withSymbolConfiguration(config)
         }
     }
@@ -185,7 +196,7 @@ public final class HUDControlsView: NSVisualEffectView {
     public func updateFullscreenState(isFullscreen: Bool) {
         let symbol = isFullscreen ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right"
         if let img = NSImage(systemSymbolName: symbol, accessibilityDescription: "Fullscreen") {
-            let config = NSImage.SymbolConfiguration(pointSize: 13, weight: .semibold)
+            let config = NSImage.SymbolConfiguration(pointSize: 12.5, weight: .semibold)
             fullscreenButton.image = img.withSymbolConfiguration(config)
         }
     }

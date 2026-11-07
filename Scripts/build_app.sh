@@ -40,3 +40,4 @@ done
 codesign --force --deep --sign - --timestamp=none "${APP_DIR}"
 
 echo "Built standalone app bundle at: ${APP_DIR}"
+

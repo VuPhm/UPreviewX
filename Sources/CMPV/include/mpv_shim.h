@@ -282,6 +282,7 @@ typedef struct mpv_opengl_fbo {
 /* UPreviewX C Helpers for Swift 6 Strict Concurrency & Pointer Safety */
 int cmpv_create_opengl_render_context(mpv_handle *mpv, mpv_render_context **out_ctx);
 int cmpv_render_opengl_fbo(mpv_render_context *ctx, int fbo, int width, int height, int skip_rendering);
+void cmpv_prefer_integrated_gpu(void *cgl_ctx, void *cgl_pix);
 const char *cmpv_current_gl_renderer(void);
 void cmpv_get_process_usage(double *out_cpu_percent, double *out_rss_mb);
 

@@ -26,6 +26,80 @@ final class UPreviewXTests: XCTestCase {
         XCTAssertEqual(diag.resolutionSummary, "1920×1080")
     }
 
+    func testEffectiveDisplaySizeAccountsForRotationAndAnamorphicDAR() {
+        // 1. Standard 16:9
+        let std = PlaybackDiagnostics.effectiveDisplaySize(
+            codedWidth: 1920, codedHeight: 1080, darWidth: 1920, darHeight: 1080, rotationDegrees: 0
+        )
+        XCTAssertEqual(std, CGSize(width: 1920, height: 1080))
+
+        // 2. Rotated 90° 4K video (3840x2160 coded -> 2160x3840 portrait display)
+        let rot90 = PlaybackDiagnostics.effectiveDisplaySize(
+            codedWidth: 3840, codedHeight: 2160, darWidth: 3840, darHeight: 2160, rotationDegrees: 90
+        )
+        XCTAssertEqual(rot90, CGSize(width: 2160, height: 3840))
+
+        // 3. Rotated 270° (-90°) 4K video
+        let rot270 = PlaybackDiagnostics.effectiveDisplaySize(
+            codedWidth: 3840, codedHeight: 2160, darWidth: 3840, darHeight: 2160, rotationDegrees: 270
+        )
+        XCTAssertEqual(rot270, CGSize(width: 2160, height: 3840))
+
+        // 4. Anamorphic 1440x1080 with 16:9 DAR (1920x1080)
+        let anamorphic = PlaybackDiagnostics.effectiveDisplaySize(
+            codedWidth: 1440, codedHeight: 1080, darWidth: 1920, darHeight: 1080, rotationDegrees: 0
+        )
+        XCTAssertEqual(anamorphic, CGSize(width: 1920, height: 1080))
+    }
+
+    func testAdaptiveWindowSizingAcrossPortraitSquareAndLandscape() {
+        let screenVisible = NSRect(x: 0, y: 50, width: 1536, height: 875)
+
+        // 1. Vertical 9:16 (1080x1920)
+        let portrait916 = PlayerWindowController.calculateTargetWindowFrame(
+            for: CGSize(width: 1080, height: 1920),
+            in: screenVisible
+        )
+        XCTAssertLessThan(portrait916.width, portrait916.height)
+        XCTAssertEqual(portrait916.width / portrait916.height, 9.0 / 16.0, accuracy: 0.003)
+        XCTAssertTrue(screenVisible.contains(portrait916))
+
+        // 2. Vertical 4:5 (1080x1350)
+        let portrait45 = PlayerWindowController.calculateTargetWindowFrame(
+            for: CGSize(width: 1080, height: 1350),
+            in: screenVisible
+        )
+        XCTAssertLessThan(portrait45.width, portrait45.height)
+        XCTAssertEqual(portrait45.width / portrait45.height, 4.0 / 5.0, accuracy: 0.003)
+        XCTAssertTrue(screenVisible.contains(portrait45))
+
+        // 3. Square 1:1 (1080x1080)
+        let square11 = PlayerWindowController.calculateTargetWindowFrame(
+            for: CGSize(width: 1080, height: 1080),
+            in: screenVisible
+        )
+        XCTAssertEqual(square11.width, square11.height, accuracy: 1.0)
+        XCTAssertTrue(screenVisible.contains(square11))
+
+        // 4. Landscape 16:9 4K (3840x2160)
+        let landscape169 = PlayerWindowController.calculateTargetWindowFrame(
+            for: CGSize(width: 3840, height: 2160),
+            in: screenVisible
+        )
+        XCTAssertGreaterThan(landscape169.width, landscape169.height)
+        XCTAssertEqual(landscape169.width / landscape169.height, 16.0 / 9.0, accuracy: 0.003)
+        XCTAssertTrue(screenVisible.contains(landscape169))
+
+        // 5. Ultrawide 21:9 (2520x1080)
+        let ultrawide219 = PlayerWindowController.calculateTargetWindowFrame(
+            for: CGSize(width: 2520, height: 1080),
+            in: screenVisible
+        )
+        XCTAssertGreaterThan(ultrawide219.width, ultrawide219.height)
+        XCTAssertEqual(ultrawide219.width / ultrawide219.height, 21.0 / 9.0, accuracy: 0.003)
+        XCTAssertTrue(screenVisible.contains(ultrawide219))
+    }
+
     func testReservedConversionServiceInterfaceIsolation() {
         let service: ConversionServiceProtocol = ReservedConversionService()
         XCTAssertFalse(service.isAvailable)
@@ -74,7 +148,7 @@ final class UPreviewXTests: XCTestCase {
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: ffmpegPath)
         proc.arguments = [
-            "-y", "-f", "lavfi", "-i", "testsrc2=size=320x240:rate=30:duration=2",
+            "-y", "-f", "lavfi", "-i", "testsrc2=size=360x640:rate=30:duration=2",
             "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "ultrafast",
             tempURL.path
         ]
@@ -88,19 +162,23 @@ final class UPreviewXTests: XCTestCase {
         defer { engine.shutdown() }
 
         let helper = EngineTestDelegate()
-        let loadExp = expectation(description: "file loaded")
-        helper.onLoaded = { loadExp.fulfill() }
+        let sizeExp = expectation(description: "video size updated")
+        helper.onSizeUpdated = { size in
+            if size.width == 360 && size.height == 640 {
+                sizeExp.fulfill()
+            }
+        }
         engine.delegate = helper
 
         try engine.initialize()
         try engine.load(url: tempURL)
 
-        wait(for: [loadExp], timeout: 5.0)
+        wait(for: [sizeExp], timeout: 5.0)
         engine.refreshDiagnostics()
 
         XCTAssertEqual(engine.diagnostics.codecName, "h264")
-        XCTAssertEqual(engine.diagnostics.width, 320)
-        XCTAssertEqual(engine.diagnostics.height, 240)
+        XCTAssertEqual(engine.diagnostics.width, 360)
+        XCTAssertEqual(engine.diagnostics.height, 640)
 
         engine.setVolume(65.0)
         XCTAssertEqual(engine.volume, 65.0, accuracy: 0.1)
@@ -112,19 +190,22 @@ final class UPreviewXTests: XCTestCase {
 
 private final class EngineTestDelegate: PlaybackEngineDelegate {
     var onLoaded: (() -> Void)?
-    private var didFulfill = false
+    var onSizeUpdated: ((CGSize) -> Void)?
+    private var didFulfillSize = false
 
     func playbackEngineDidLoadFile(_ engine: PlaybackEngineProtocol) {
-        if !didFulfill {
-            didFulfill = true
-            onLoaded?()
-        }
+        onLoaded?()
     }
     func playbackEngineDidRenderFirstFrame(_ engine: PlaybackEngineProtocol, latencyMs: Double) {}
     func playbackEngine(_ engine: PlaybackEngineProtocol, didUpdatePosition position: Double, duration: Double) {}
     func playbackEngine(_ engine: PlaybackEngineProtocol, didUpdatePause isPaused: Bool) {}
     func playbackEngine(_ engine: PlaybackEngineProtocol, didUpdateVolume volume: Double, isMuted: Bool) {}
-    func playbackEngine(_ engine: PlaybackEngineProtocol, didUpdateVideoSize size: CGSize) {}
+    func playbackEngine(_ engine: PlaybackEngineProtocol, didUpdateVideoSize size: CGSize) {
+        if !didFulfillSize {
+            didFulfillSize = true
+            onSizeUpdated?(size)
+        }
+    }
     func playbackEngine(_ engine: PlaybackEngineProtocol, didCompleteSeek latencyMs: Double) {}
     func playbackEngine(_ engine: PlaybackEngineProtocol, didUpdateDiagnostics diagnostics: PlaybackDiagnostics) {}
     func playbackEngine(_ engine: PlaybackEngineProtocol, didEncounterError error: PlaybackEngineError) {}

@@ -86,3 +86,4 @@ public final class ReservedConversionService: ConversionServiceProtocol {
 
     public func cancelActiveConversion() {}
 }
+

@@ -1,4 +1,5 @@
 import Foundation
+import CoreGraphics
 
 /// Errors emitted by the playback engine.
 public enum PlaybackEngineError: Error, LocalizedError, Equatable {
@@ -45,6 +46,7 @@ public protocol PlaybackEngineProtocol: AnyObject {
     var volume: Double { get }
     var isMuted: Bool { get }
     var videoSize: CGSize { get }
+    var isFastPreviewMode: Bool { get }
     var diagnostics: PlaybackDiagnostics { get }
 
     func initialize() throws
@@ -53,9 +55,11 @@ public protocol PlaybackEngineProtocol: AnyObject {
     func pause()
     func togglePlayPause()
     func seek(to seconds: Double, exact: Bool)
-    func seekRelative(_ deltaSeconds: Double)
+    func seekRelative(_ deltaSeconds: Double, exact: Bool)
     func setVolume(_ volume: Double)
     func toggleMute()
+    func setFastPreviewMode(_ enabled: Bool)
+    func toggleFastPreviewMode()
     func refreshDiagnostics()
     func shutdown()
 }

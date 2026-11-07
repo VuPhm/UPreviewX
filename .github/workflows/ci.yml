@@ -30,3 +30,4 @@ jobs:
           HOST_ARCH="$(uname -m)"
           swift build -c release --arch "${HOST_ARCH}"
           swift test --arch "${HOST_ARCH}"
+

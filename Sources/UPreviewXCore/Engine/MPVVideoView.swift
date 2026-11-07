@@ -70,6 +70,7 @@ public final class MPVVideoLayer: CAOpenGLLayer {
         CGLSetParameter(ctx, kCGLCPSwapInterval, &swapInterval)
 
         CGLSetCurrentContext(ctx)
+        cmpv_prefer_integrated_gpu(UnsafeMutableRawPointer(ctx), UnsafeMutableRawPointer(pf))
         try? engine?.createOpenGLRenderContext()
         return ctx
     }
@@ -170,3 +171,4 @@ public final class MPVVideoView: NSView {
         }
     }
 }
+

@@ -27,3 +27,4 @@ Because the bundled `libmpv.2.dylib` and `FFmpeg` (`libavcodec.61.dylib`, `libav
 | **LuaJIT / MuJS** | `libluajit-5.1.2.dylib`, `libmujs.dylib` | `2.1` / `1.3` | MIT / ISC | Linked by `libmpv` runtime (scripts disabled at launch via `load-scripts=no`) |
 | **GnuTLS / Nettle / GMP** | `libgnutls.30.dylib`, `libnettle.8.dylib`, `libhogweed.6.dylib`, `libgmp.10.dylib` | `3.8.x` | LGPLv2.1+ / LGPLv3+ | Transport layer security dependencies of `libavformat` |
 | **Compression & Utility Libs** | `libzstd.1.dylib`, `liblz4.1.dylib`, `liblzma.5.dylib`, `libbrotli*.dylib`, `libarchive.13.dylib` | Various | BSD / MIT / Public Domain | Container & archive decompression support |
+

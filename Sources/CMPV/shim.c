@@ -3,7 +3,9 @@
 #include <dlfcn.h>
 #include <mach/mach.h>
 #include <sys/time.h>
+#include <OpenGL/OpenGL.h>
 #include <OpenGL/gl3.h>
+#include <string.h>
 
 static void *gl_get_proc_address(void *ctx, const char *name) {
     (void)ctx;
@@ -51,6 +53,24 @@ int cmpv_render_opengl_fbo(mpv_render_context *ctx, int fbo, int width, int heig
         { MPV_RENDER_PARAM_INVALID, NULL }
     };
     return mpv_render_context_render(ctx, params);
+}
+
+void cmpv_prefer_integrated_gpu(void *cgl_ctx, void *cgl_pix) {
+    if (!cgl_ctx || !cgl_pix) return;
+    CGLContextObj ctx = (CGLContextObj)cgl_ctx;
+    CGLPixelFormatObj pix = (CGLPixelFormatObj)cgl_pix;
+    GLint nScreens = 0;
+    if (CGLDescribePixelFormat(pix, 0, kCGLPFAVirtualScreenCount, &nScreens) == kCGLNoError && nScreens > 1) {
+        for (GLint i = 0; i < nScreens; i++) {
+            if (CGLSetVirtualScreen(ctx, i) == kCGLNoError) {
+                const char *renderer = (const char *)glGetString(GL_RENDERER);
+                if (renderer && strstr(renderer, "Intel") != NULL) {
+                    return;
+                }
+            }
+        }
+        CGLSetVirtualScreen(ctx, 0);
+    }
 }
 
 const char *cmpv_current_gl_renderer(void) {

@@ -80,3 +80,4 @@ for dylib in "${VENDOR_LIB_DIR}"/*.dylib; do
 done
 
 echo "Prepared $(ls -1 "${VENDOR_LIB_DIR}"/*.dylib | wc -l | tr -d ' ') dylib files in Vendor/lib."
+

@@ -15,7 +15,7 @@ public final class PlayerWindow: NSWindow {
     }
 }
 
-/// Native macOS video preview window controller.
+/// Native macOS video preview window controller with adaptive aspect-ratio sizing.
 public final class PlayerWindowController: NSWindowController, NSWindowDelegate, PlaybackEngineDelegate {
     public let engine: MPVPlaybackEngine
     public let videoView: MPVVideoView
@@ -27,8 +27,11 @@ public final class PlayerWindowController: NSWindowController, NSWindowDelegate,
 
     private var hideControlsTimer: Timer?
     private var diagnosticsTimer: Timer?
+    private var initialRevealTimer: Timer?
     private var trackingArea: NSTrackingArea?
-    private var hasSizedWindowForCurrentFile = false
+    private var lastAppliedVideoSize: CGSize = .zero
+    private var userDidManuallyResizeWindow = false
+    private var isProgrammaticWindowResize = false
     private var isFullscreen = false
     private var isControlsHidden = false
 
@@ -37,7 +40,7 @@ public final class PlayerWindowController: NSWindowController, NSWindowDelegate,
         self.engine = playbackEngine
         self.videoView = MPVVideoView(engine: playbackEngine)
 
-        let initialRect = NSRect(x: 0, y: 0, width: 960, height: 540)
+        let initialRect = NSRect(x: 0, y: 0, width: 640, height: 480)
         let style: NSWindow.StyleMask = [
             .titled,
             .closable,
@@ -57,9 +60,12 @@ public final class PlayerWindowController: NSWindowController, NSWindowDelegate,
         win.isMovableByWindowBackground = true
         win.backgroundColor = .black
         win.appearance = NSAppearance(named: .darkAqua)
-        win.minSize = NSSize(width: 420, height: 260)
+        // Compact minSize so narrow 9:16 portrait windows are never forced wide
+        win.minSize = NSSize(width: 210, height: 210)
         win.collectionBehavior = [.fullScreenPrimary, .managed]
         win.isReleasedWhenClosed = false
+        // Start transparent until video geometry arrives so vertical videos never flash in a 16:9 frame
+        win.alphaValue = 0.0
         win.center()
 
         super.init(window: win)
@@ -88,7 +94,7 @@ public final class PlayerWindowController: NSWindowController, NSWindowDelegate,
         }
         container.addSubview(videoView)
 
-        // HUD Controls
+        // HUD Controls: overlaid compactly on video, adaptable to narrow portrait windows
         hudView.translatesAutoresizingMaskIntoConstraints = false
         hudView.onPlayPause = { [weak self] in
             self?.engine.togglePlayPause()
@@ -120,15 +126,20 @@ public final class PlayerWindowController: NSWindowController, NSWindowDelegate,
         diagnosticsView.isHidden = !showDiagnostics
         container.addSubview(diagnosticsView)
 
+        let preferredHUDWidth = hudView.widthAnchor.constraint(equalToConstant: 500)
+        preferredHUDWidth.priority = .defaultLow
+
         NSLayoutConstraint.activate([
             hudView.centerXAnchor.constraint(equalTo: container.centerXAnchor),
-            hudView.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -20),
-            hudView.widthAnchor.constraint(greaterThanOrEqualToConstant: 460),
-            hudView.widthAnchor.constraint(lessThanOrEqualTo: container.widthAnchor, constant: -32),
-            hudView.heightAnchor.constraint(equalToConstant: 42),
+            hudView.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -16),
+            preferredHUDWidth,
+            hudView.leadingAnchor.constraint(greaterThanOrEqualTo: container.leadingAnchor, constant: 12),
+            hudView.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor, constant: -12),
+            hudView.heightAnchor.constraint(equalToConstant: 38),
 
-            diagnosticsView.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 16),
-            diagnosticsView.topAnchor.constraint(equalTo: container.topAnchor, constant: 38)
+            diagnosticsView.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 12),
+            diagnosticsView.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor, constant: -12),
+            diagnosticsView.topAnchor.constraint(equalTo: container.topAnchor, constant: 34)
         ])
 
         win.onKeyShortcut = { [weak self] event in
@@ -154,24 +165,117 @@ public final class PlayerWindowController: NSWindowController, NSWindowDelegate,
         trackingArea = area
     }
 
+    // MARK: - Adaptive Window Geometry Calculation
+
+    /// Calculates an aspect-accurate, centered window frame constrained to the screen's `visibleFrame`
+    /// (which excludes the macOS menu bar and Dock).
+    /// Supports portrait (9:16, 4:5), square (1:1), and landscape (16:9, 21:9) video dimensions.
+    public static func calculateTargetWindowFrame(
+        for videoDisplaySize: CGSize,
+        in visibleFrame: NSRect
+    ) -> NSRect {
+        guard videoDisplaySize.width > 0, videoDisplaySize.height > 0 else {
+            return visibleFrame
+        }
+
+        let maxW = floor(visibleFrame.width * 0.90)
+        let maxH = floor(visibleFrame.height * 0.88)
+        let aspect = videoDisplaySize.width / videoDisplaySize.height
+
+        var targetW = videoDisplaySize.width
+        var targetH = videoDisplaySize.height
+
+        // Constrain oversized dimensions while preserving exact display aspect ratio
+        if targetW > maxW {
+            targetW = maxW
+            targetH = (targetW / aspect).rounded()
+        }
+        if targetH > maxH {
+            targetH = maxH
+            targetW = (targetH * aspect).rounded()
+        }
+
+        // Enforce a sensible minimum preview size while strictly preserving aspect ratio
+        let minShortEdge: CGFloat = 240.0
+        if min(targetW, targetH) < minShortEdge {
+            if aspect >= 1.0 {
+                targetH = min(maxH, minShortEdge)
+                targetW = min(maxW, (targetH * aspect).rounded())
+            } else {
+                targetW = min(maxW, minShortEdge)
+                targetH = min(maxH, (targetW / aspect).rounded())
+            }
+        }
+
+        let originX = (visibleFrame.origin.x + (visibleFrame.width - targetW) / 2.0).rounded()
+        let originY = (visibleFrame.origin.y + (visibleFrame.height - targetH) / 2.0).rounded()
+        return NSRect(x: originX, y: originY, width: targetW, height: targetH)
+    }
+
+    private func applyAdaptiveWindowSize(_ size: CGSize) {
+        guard size.width > 0 && size.height > 0, let win = window else { return }
+
+        // Lock window frame aspect ratio (matches fullSizeContentView viewport)
+        win.aspectRatio = size
+
+        guard !isFullscreen, !userDidManuallyResizeWindow else {
+            revealWindowIfNeeded()
+            return
+        }
+
+        guard size != lastAppliedVideoSize else {
+            revealWindowIfNeeded()
+            return
+        }
+        lastAppliedVideoSize = size
+
+        let screenVisible = (win.screen ?? NSScreen.main)?.visibleFrame
+            ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
+        let targetFrame = Self.calculateTargetWindowFrame(for: size, in: screenVisible)
+
+        isProgrammaticWindowResize = true
+        win.setFrame(targetFrame, display: true, animate: false)
+        isProgrammaticWindowResize = false
+
+        revealWindowIfNeeded()
+    }
+
+    private func revealWindowIfNeeded() {
+        initialRevealTimer?.invalidate()
+        initialRevealTimer = nil
+        if let win = window, win.alphaValue < 1.0 {
+            win.alphaValue = 1.0
+        }
+    }
+
     // MARK: - Public Actions
 
     public func openMedia(url: URL) {
-        hasSizedWindowForCurrentFile = false
-        window?.title = url.lastPathComponent
+        lastAppliedVideoSize = .zero
+        userDidManuallyResizeWindow = false
+        updateWindowTitle(for: url)
         window?.representedURL = url
         showWindow(nil)
         window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+
         // Force immediate CGLContext and mpv_render_context creation before loading the file
         videoView.videoLayer.display()
+
+        // Fallback timer to reveal window if an audio-only or broken file produces no video reconfig
+        initialRevealTimer?.invalidate()
+        initialRevealTimer = Timer.scheduledTimer(withTimeInterval: 0.18, repeats: false) { [weak self] _ in
+            self?.revealWindowIfNeeded()
+        }
 
         do {
             try engine.load(url: url)
             resetAutoHideTimer()
         } catch let error as PlaybackEngineError {
+            revealWindowIfNeeded()
             presentErrorAlert(error)
         } catch {
+            revealWindowIfNeeded()
             presentErrorAlert(.loadFailed(error.localizedDescription))
         }
     }
@@ -188,6 +292,18 @@ public final class PlayerWindowController: NSWindowController, NSWindowDelegate,
         } else {
             stopDiagnosticsTimer()
         }
+    }
+
+    public func toggleFastPreviewMode() {
+        engine.toggleFastPreviewMode()
+        if let url = engine.currentURL {
+            updateWindowTitle(for: url)
+        }
+    }
+
+    private func updateWindowTitle(for url: URL) {
+        let suffix = engine.isFastPreviewMode ? " — [Fast Preview]" : ""
+        window?.title = url.lastPathComponent + suffix
     }
 
     // MARK: - Keyboard Shortcuts
@@ -209,12 +325,14 @@ public final class PlayerWindowController: NSWindowController, NSWindowDelegate,
             engine.togglePlayPause()
             return true
         case 123: // Left Arrow
-            let step = flags.contains(.shift) ? -1.0 : -5.0
-            engine.seekRelative(step)
+            let exact = flags.contains(.shift)
+            let step = exact ? -1.0 : -5.0
+            engine.seekRelative(step, exact: exact)
             return true
         case 124: // Right Arrow
-            let step = flags.contains(.shift) ? 1.0 : 5.0
-            engine.seekRelative(step)
+            let exact = flags.contains(.shift)
+            let step = exact ? 1.0 : 5.0
+            engine.seekRelative(step, exact: exact)
             return true
         case 126: // Up Arrow
             engine.setVolume(engine.volume + 5.0)
@@ -230,6 +348,9 @@ public final class PlayerWindowController: NSWindowController, NSWindowDelegate,
             return true
         case 2: // D
             toggleDiagnosticsOverlay()
+            return true
+        case 35: // P
+            toggleFastPreviewMode()
             return true
         case 53: // Escape
             if isFullscreen {
@@ -319,6 +440,7 @@ public final class PlayerWindowController: NSWindowController, NSWindowDelegate,
     }
 
     public func playbackEngineDidRenderFirstFrame(_ engine: PlaybackEngineProtocol, latencyMs: Double) {
+        revealWindowIfNeeded()
         diagnosticsView.update(with: engine.diagnostics)
         onFirstFrameRendered?(engine.diagnostics)
     }
@@ -341,35 +463,7 @@ public final class PlayerWindowController: NSWindowController, NSWindowDelegate,
     }
 
     public func playbackEngine(_ engine: PlaybackEngineProtocol, didUpdateVideoSize size: CGSize) {
-        guard size.width > 0 && size.height > 0, let win = window else { return }
-        win.contentAspectRatio = size
-
-        guard !hasSizedWindowForCurrentFile, !isFullscreen else { return }
-        hasSizedWindowForCurrentFile = true
-
-        let screenFrame = (win.screen ?? NSScreen.main)?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
-        let maxW = screenFrame.width * 0.82
-        let maxH = screenFrame.height * 0.82
-        let aspect = size.width / size.height
-
-        var targetW = size.width
-        var targetH = size.height
-
-        if targetW > maxW {
-            targetW = maxW
-            targetH = targetW / aspect
-        }
-        if targetH > maxH {
-            targetH = maxH
-            targetW = targetH * aspect
-        }
-        targetW = max(targetW, win.minSize.width)
-        targetH = max(targetH, win.minSize.height)
-
-        let originX = screenFrame.origin.x + (screenFrame.width - targetW) / 2.0
-        let originY = screenFrame.origin.y + (screenFrame.height - targetH) / 2.0
-        let targetFrame = NSRect(x: originX, y: originY, width: targetW, height: targetH)
-        win.setFrame(targetFrame, display: true, animate: false)
+        applyAdaptiveWindowSize(size)
     }
 
     public func playbackEngine(_ engine: PlaybackEngineProtocol, didCompleteSeek latencyMs: Double) {
@@ -381,6 +475,7 @@ public final class PlayerWindowController: NSWindowController, NSWindowDelegate,
     }
 
     public func playbackEngine(_ engine: PlaybackEngineProtocol, didEncounterError error: PlaybackEngineError) {
+        revealWindowIfNeeded()
         presentErrorAlert(error)
     }
 
@@ -403,6 +498,12 @@ public final class PlayerWindowController: NSWindowController, NSWindowDelegate,
 
     // MARK: - NSWindowDelegate
 
+    public func windowWillStartLiveResize(_ notification: Notification) {
+        if !isProgrammaticWindowResize && !isFullscreen {
+            userDidManuallyResizeWindow = true
+        }
+    }
+
     public func windowDidEnterFullScreen(_ notification: Notification) {
         isFullscreen = true
         hudView.updateFullscreenState(isFullscreen: true)
@@ -414,6 +515,8 @@ public final class PlayerWindowController: NSWindowController, NSWindowDelegate,
     }
 
     public func windowWillClose(_ notification: Notification) {
+        initialRevealTimer?.invalidate()
+        initialRevealTimer = nil
         hideControlsTimer?.invalidate()
         hideControlsTimer = nil
         stopDiagnosticsTimer()

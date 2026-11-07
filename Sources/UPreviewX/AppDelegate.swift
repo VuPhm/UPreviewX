@@ -6,6 +6,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     private var windowControllers: [PlayerWindowController] = []
     private var didOpenInitialFile = false
     private var showDiagnosticsByDefault = false
+    private var enableFastPreviewByDefault = false
     private var benchmarkTargets: [URL] = []
     private var isBenchmarkMode = false
     public let appLaunchTimestamp = CFAbsoluteTimeGetCurrent()
@@ -32,6 +33,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     public func application(_ application: NSApplication, open urls: [URL]) {
+        guard !isBenchmarkMode else { return }
         didOpenInitialFile = true
         for url in urls where url.isFileURL {
             openVideoWindow(for: url)
@@ -39,6 +41,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     public func application(_ sender: NSApplication, openFile filename: String) -> Bool {
+        guard !isBenchmarkMode else { return true }
         didOpenInitialFile = true
         let url = URL(fileURLWithPath: filename)
         openVideoWindow(for: url)
@@ -46,6 +49,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     public func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        return true
+    }
+
+    public func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool {
         return true
     }
 
@@ -64,6 +71,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
             controller = existing
         } else {
             let newController = PlayerWindowController(showDiagnostics: showDiagnosticsByDefault)
+            if enableFastPreviewByDefault {
+                newController.engine.setFastPreviewMode(true)
+            }
             newController.onWindowWillClose = { [weak self] closed in
                 self?.windowControllers.removeAll { $0 === closed }
                 if self?.windowControllers.isEmpty == true {
@@ -82,6 +92,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc public func toggleDiagnostics(_ sender: Any?) {
         windowControllers.first?.toggleDiagnosticsOverlay()
+    }
+
+    @objc public func toggleFastPreview(_ sender: Any?) {
+        windowControllers.first?.toggleFastPreviewMode()
     }
 
     @objc public func toggleFullscreen(_ sender: Any?) {
@@ -127,6 +141,8 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
             let arg = args[idx]
             if arg == "--diagnostics" || arg == "-d" {
                 showDiagnosticsByDefault = true
+            } else if arg == "--fast-preview" {
+                enableFastPreviewByDefault = true
             } else if arg == "--benchmark" && idx + 1 < args.count {
                 isBenchmarkMode = true
                 showDiagnosticsByDefault = true
@@ -161,8 +177,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func runBenchmarkSuite(urls: [URL]) {
         let controller = PlayerWindowController(showDiagnostics: true)
+        if enableFastPreviewByDefault {
+            controller.engine.setFastPreviewMode(true)
+        }
         windowControllers.append(controller)
-        let coldStartMs = (CFAbsoluteTimeGetCurrent() - appLaunchTimestamp) * 1000.0
+        let coldStartWindowMs = (CFAbsoluteTimeGetCurrent() - appLaunchTimestamp) * 1000.0
+        var coldLaunchFirstFrameMs: Double = 0
         var results: [[String: Any]] = []
 
         func runNext(index: Int) {
@@ -179,40 +199,81 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
             }
 
             let url = urls[index]
+            controller.onFirstFrameRendered = { [weak self] diag in
+                guard let self = self else { return }
+                if index == 0 && coldLaunchFirstFrameMs == 0 {
+                    coldLaunchFirstFrameMs = (CFAbsoluteTimeGetCurrent() - self.appLaunchTimestamp) * 1000.0
+                }
+            }
             controller.openMedia(url: url)
 
-            // Wait 1.2s of real playback, then trigger an exact seek to 2.5s, then sample diagnostics at 2.2s
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
-                controller.engine.seek(to: 2.5, exact: true)
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                    controller.engine.refreshDiagnostics()
-                    let d = controller.engine.diagnostics
-                    let entry: [String: Any] = [
-                        "file": d.fileName,
-                        "container": d.containerFormat,
-                        "codec": d.codecName,
-                        "codecDescription": d.codecDescription,
-                        "pixelFormat": d.pixelFormat,
-                        "hwFormat": d.hwFormat,
-                        "hwdecCurrent": d.hwdecCurrent,
-                        "isHardwareAccelerated": d.isHardwareAccelerated,
-                        "decodePath": d.decodePathSummary,
-                        "activeGPU": d.activeGPU,
-                        "resolution": d.resolutionSummary,
-                        "nominalFPS": round(d.nominalFPS * 100) / 100,
-                        "estimatedFPS": round(d.estimatedFPS * 100) / 100,
-                        "droppedFrames": d.droppedFrames,
-                        "decoderDroppedFrames": d.decoderDroppedFrames,
-                        "avSyncDiffMs": round(d.avSyncDiffMs * 100) / 100,
-                        "coldStartWindowMs": round(coldStartMs * 100) / 100,
-                        "engineInitLatencyMs": round(d.engineInitLatencyMs * 100) / 100,
-                        "firstFrameLatencyMs": round(d.firstFrameLatencyMs * 100) / 100,
-                        "seekLatencyMs": round(d.lastSeekLatencyMs * 100) / 100,
-                        "cpuUsagePercent": round(d.cpuUsagePercent * 10) / 10,
-                        "residentMemoryMB": round(d.residentMemoryMB * 10) / 10
-                    ]
-                    results.append(entry)
-                    runNext(index: index + 1)
+            // Phase 1: Play for 2.2s to measure steady-state playback FPS, CPU, GPU, and adaptive window geometry
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.2) {
+                controller.engine.refreshDiagnostics()
+                let steadyDiag = controller.engine.diagnostics
+                let steadyFPS = steadyDiag.estimatedFPS
+                let steadyCPU = steadyDiag.cpuUsagePercent
+                let steadyDrops = steadyDiag.droppedFrames
+                let steadyDecDrops = steadyDiag.decoderDroppedFrames
+
+                let dur = max(4.0, controller.engine.duration)
+                let scrubTarget = min(dur * 0.55, max(1.5, dur - 1.0))
+
+                // Phase 2: Fast keyframe scrub seek (simulating timeline drag)
+                controller.engine.seek(to: scrubTarget, exact: false)
+
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    let keyframeSeekMs = controller.engine.diagnostics.lastSeekLatencyMs
+                    let exactTarget = min(dur * 0.30, max(1.0, dur - 1.5))
+
+                    // Phase 3: Accurate seek on release
+                    controller.engine.seek(to: exactTarget, exact: true)
+
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) {
+                        controller.engine.refreshDiagnostics()
+                        let d = controller.engine.diagnostics
+                        let winFrame = controller.window?.frame ?? .zero
+                        let winAspect = winFrame.height > 0 ? (winFrame.width / winFrame.height) : 0
+                        let vidAspect = d.height > 0 ? (Double(d.width) / Double(d.height)) : 0
+
+                        let entry: [String: Any] = [
+                            "file": d.fileName,
+                            "fileSizeMB": round(d.fileSizeMB * 10) / 10,
+                            "container": d.containerFormat,
+                            "codec": d.codecName,
+                            "codecDescription": d.codecDescription,
+                            "pixelFormat": d.pixelFormat,
+                            "hwFormat": d.hwFormat,
+                            "hwdecCurrent": d.hwdecCurrent,
+                            "isHardwareAccelerated": d.isHardwareAccelerated,
+                            "isFastPreviewMode": d.isFastPreviewMode,
+                            "decodePath": d.decodePathSummary,
+                            "activeGPU": d.activeGPU,
+                            "codedResolution": "\(d.rawWidth)×\(d.rawHeight)",
+                            "rotationDegrees": d.rotationDegrees,
+                            "displayResolution": "\(d.width)×\(d.height)",
+                            "videoAspectRatio": round(vidAspect * 1000) / 1000,
+                            "windowSize": "\(Int(winFrame.width))×\(Int(winFrame.height))",
+                            "windowAspectRatio": round(Double(winAspect) * 1000) / 1000,
+                            "videoBitrateMbps": round(d.videoBitrateMbps * 10) / 10,
+                            "nominalFPS": round(d.nominalFPS * 100) / 100,
+                            "effectiveFPS": round((steadyFPS > 0 ? steadyFPS : d.estimatedFPS) * 100) / 100,
+                            "droppedFrames": steadyDrops,
+                            "decoderDroppedFrames": steadyDecDrops,
+                            "avSyncDiffMs": round(d.avSyncDiffMs * 100) / 100,
+                            "coldStartWindowMs": round(coldStartWindowMs * 100) / 100,
+                            "coldLaunchFirstFrameMs": round(coldLaunchFirstFrameMs * 100) / 100,
+                            "engineInitLatencyMs": round(d.engineInitLatencyMs * 100) / 100,
+                            "firstFrameLatencyMs": round(d.firstFrameLatencyMs * 100) / 100,
+                            "seekKeyframeLatencyMs": round(keyframeSeekMs * 100) / 100,
+                            "seekExactLatencyMs": round(d.lastSeekLatencyMs * 100) / 100,
+                            "cpuUsagePercent": round((steadyCPU > 0 ? steadyCPU : d.cpuUsagePercent) * 10) / 10,
+                            "residentMemoryMB": round(d.residentMemoryMB * 10) / 10,
+                            "peakMemoryMB": round(d.peakMemoryMB * 10) / 10
+                        ]
+                        results.append(entry)
+                        runNext(index: index + 1)
+                    }
                 }
             }
         }
@@ -261,6 +322,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         fullScreenItem.keyEquivalentModifierMask = [.command, .control]
         viewMenu.addItem(fullScreenItem)
         viewMenu.addItem(withTitle: "Toggle Decoder Diagnostics", action: #selector(toggleDiagnostics(_:)), keyEquivalent: "i")
+        let fastPreviewItem = NSMenuItem(title: "Toggle Fast Preview Mode (Software 4K)", action: #selector(toggleFastPreview(_:)), keyEquivalent: "p")
+        fastPreviewItem.keyEquivalentModifierMask = []
+        viewMenu.addItem(fastPreviewItem)
         viewMenuItem.submenu = viewMenu
 
         // Window Menu
