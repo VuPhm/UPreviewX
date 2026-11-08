@@ -34,6 +34,11 @@ public protocol PlaybackEngineDelegate: AnyObject {
     func playbackEngine(_ engine: PlaybackEngineProtocol, didUpdateDiagnostics diagnostics: PlaybackDiagnostics)
     func playbackEngine(_ engine: PlaybackEngineProtocol, didEncounterError error: PlaybackEngineError)
     func playbackEngineDidReachEndOfFile(_ engine: PlaybackEngineProtocol)
+    func playbackEngine(_ engine: PlaybackEngineProtocol, didUpdateSpeed speed: Double)
+}
+
+public extension PlaybackEngineDelegate {
+    func playbackEngine(_ engine: PlaybackEngineProtocol, didUpdateSpeed speed: Double) {}
 }
 
 /// Isolated playback engine interface decoupled from AppKit window management and conversion services.
@@ -46,6 +51,7 @@ public protocol PlaybackEngineProtocol: AnyObject {
     var volume: Double { get }
     var isMuted: Bool { get }
     var videoSize: CGSize { get }
+    var speed: Double { get }
     var isFastPreviewMode: Bool { get }
     var diagnostics: PlaybackDiagnostics { get }
 
@@ -54,6 +60,7 @@ public protocol PlaybackEngineProtocol: AnyObject {
     func play()
     func pause()
     func togglePlayPause()
+    func setSpeed(_ speed: Double)
     func seek(to seconds: Double, exact: Bool)
     func seekRelative(_ deltaSeconds: Double, exact: Bool)
     func setVolume(_ volume: Double)
@@ -61,5 +68,6 @@ public protocol PlaybackEngineProtocol: AnyObject {
     func setFastPreviewMode(_ enabled: Bool)
     func toggleFastPreviewMode()
     func refreshDiagnostics()
+    func captureFrame(to destinationURL: URL, completion: @escaping (Result<URL, PlaybackEngineError>) -> Void)
     func shutdown()
 }

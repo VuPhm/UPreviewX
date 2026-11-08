@@ -1,5 +1,9 @@
 # UPreviewX
 
+<p align="center">
+  <img src="Resources/AppIcon.png" width="128" height="128" alt="UPreviewX App Icon" />
+</p>
+
 **UPreviewX** is a lightweight, native macOS video preview utility (`Swift` + `AppKit`, `x86_64`) optimized for the **Intel MacBook Pro 16-inch (2019)** (Intel Core i7-9750H, 16 GB RAM, Intel UHD Graphics 630 + AMD Radeon Pro 5300M).
 
 It delivers a fast, minimal, single-window preview experience similar to QuickTime / QuickLook while leveraging **libmpv + FFmpeg + VideoToolbox + dav1d** (the playback foundation of IINA) for broad codec and container compatibility.
@@ -40,10 +44,13 @@ Sources/
 │   │   └── MPVVideoView.swift          # NSView + CAOpenGLLayer (mpv_render_context)
 │   ├── Services/                       # Reserved conversion interface (decoupled)
 │   │   └── ConversionServiceProtocol.swift
+│   ├── Settings/                       # Centralized, typed user preferences
+│   │   └── UserSettings.swift
 │   └── UI/                             # Native AppKit adaptive window & HUD controls
 │       ├── PlayerWindowController.swift
 │       ├── HUDControlsView.swift
 │       ├── DiagnosticsOverlayView.swift
+│       ├── SettingsWindowController.swift
 │       └── TimeFormatter.swift
 └── UPreviewX/                          # Application lifecycle & CLI benchmark runner
     ├── AppDelegate.swift
@@ -126,20 +133,26 @@ The following extreme **software-only 4K 60fps** combinations exceed the 6-core 
 
 ---
 
-## Keyboard Shortcuts
+## Keyboard Shortcuts & Everyday Preview Controls
 
-| Shortcut | Action |
-|----------|--------|
-| `Space` | Play / Pause (replays from `00:00` if at end of file) |
-| `Left` / `Right` | Seek backward / forward 5 seconds (keyframe seek) |
-| `Shift + Left` / `Shift + Right` | Seek backward / forward 1 second (exact seek) |
-| `Up` / `Down` | Increase / decrease volume by 5% |
-| `M` | Toggle audio mute |
-| `P` | Toggle **Fast Preview Mode** (for heavy software-decoded 4K streams) |
-| `F` or `Cmd + Ctrl + F` or Double-Click | Toggle native macOS Fullscreen |
-| `D` or `Cmd + I` | Toggle Developer Decoder Diagnostics HUD |
-| `Cmd + O` | Open video file |
-| `Cmd + W` | Close window (terminates app if last window) |
+| Shortcut / Gesture | Action | Description |
+|--------------------|--------|-------------|
+| `Space` | Play / Pause | Replays from `00:00` if at end of file |
+| `Hold Right (→)` | **Safe Fast-Forward Shuttle** | Temporarily speeds up playback (2× / 4×) with subtle HUD badge; immediately restores original playback state on release |
+| `Hold Left (←)` | **Safe Rewind Shuttle** | Paced keyframe backward seek without decoder stall; immediately restores previous playback state on release |
+| `Tap Right (→)` | Step forward 5 seconds | Fast keyframe relative jump |
+| `Tap Left (←)` | Step backward 5 seconds | Fast keyframe relative jump |
+| `Shift + Left / Right` | Step backward / forward 1 second | Exact single-second seek |
+| `Cmd + Shift + S` | **Save Current Frame** | Captures unscaled decoded frame to `~/Pictures/UPreviewX` as PNG without OSD or window elements |
+| `Right-Click Video` | **Context Menu** | Quick access to *Save Current Frame*, Play/Pause, Rewind/Forward, Diagnostics, Fullscreen |
+| `Cmd + ,` | **Settings** | Opens native AppKit preferences window (General, Playback, Frame Capture) |
+| `Up` / `Down` | Volume ±5% | Adjusts audio playback volume |
+| `M` | Mute | Toggles audio mute |
+| `P` | Toggle Fast Preview Mode | Skips in-loop deblocking on heavy 4K software-decoded streams |
+| `F` or `Cmd + Ctrl + F` or Double-Click | Toggle Fullscreen | Native macOS smooth fullscreen transition |
+| `D` or `Cmd + I` | Toggle Decoder Diagnostics | Real-time decoder, FPS, GPU, memory and frame-drop HUD |
+| `Cmd + O` | Open video file | Native macOS file picker with video type filtering |
+| `Cmd + W` | Close window | Closes active window (exits app if last window closed, configurable in Settings) |
 
 ---
 
@@ -150,13 +163,19 @@ The following extreme **software-only 4K 60fps** combinations exceed the 6-core 
 - macOS 13.0+ (`x86_64` target)
 - Xcode 15+ / Swift 5.10+ Command Line Tools
 
-### Build Standalone App Bundle
+### Build & Clean Install Standalone App Bundle
 
 ```bash
-# 1. Prepare thinned x86_64 libmpv/FFmpeg runtime libraries and build dist/UPreviewX.app
+# 1. Build dist/UPreviewX.app (auto-syncs ~/Applications/UPreviewX.app if installed)
 make app
 
-# 2. Run unit and engine integration tests
+# 2. Install or update ~/Applications/UPreviewX.app and refresh LaunchServices / Icon cache
+make install
+
+# 3. Full clean rebuild & reinstall from scratch (cleans .build, dist, and old installation)
+make reinstall
+
+# 4. Run unit and engine integration tests
 make test
 ```
 

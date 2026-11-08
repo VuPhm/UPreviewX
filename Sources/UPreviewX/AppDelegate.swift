@@ -13,6 +13,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
     public func applicationWillFinishLaunching(_ notification: Notification) {
         NSWindow.allowsAutomaticWindowTabbing = false
+        if let iconURL = Bundle.main.url(forResource: "AppIcon", withExtension: "icns"),
+           let iconImage = NSImage(contentsOf: iconURL) {
+            NSApp.applicationIconImage = iconImage
+        }
         setupMainMenu()
         parseCommandLineArguments()
     }
@@ -49,7 +53,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     public func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-        return true
+        return UserSettings.shared.quitWhenLastWindowCloses
     }
 
     public func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool {
@@ -71,12 +75,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
             controller = existing
         } else {
             let newController = PlayerWindowController(showDiagnostics: showDiagnosticsByDefault)
-            if enableFastPreviewByDefault {
+            if enableFastPreviewByDefault || UserSettings.shared.fastPreviewModeByDefault {
                 newController.engine.setFastPreviewMode(true)
             }
             newController.onWindowWillClose = { [weak self] closed in
                 self?.windowControllers.removeAll { $0 === closed }
-                if self?.windowControllers.isEmpty == true {
+                if self?.windowControllers.isEmpty == true && UserSettings.shared.quitWhenLastWindowCloses {
                     NSApp.terminate(nil)
                 }
             }
@@ -88,6 +92,22 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc public func openDocument(_ sender: Any?) {
         promptToOpenFile(terminateOnCancelIfNoWindows: windowControllers.isEmpty)
+    }
+
+    @objc public func openSettings(_ sender: Any?) {
+        SettingsWindowController.shared.showSettings()
+    }
+
+    @objc public func saveCurrentFrame(_ sender: Any?) {
+        windowControllers.first?.captureCurrentFrame()
+    }
+
+    @objc public func fastForward(_ sender: Any?) {
+        windowControllers.first?.engine.seekRelative(5.0, exact: false)
+    }
+
+    @objc public func rewind(_ sender: Any?) {
+        windowControllers.first?.engine.seekRelative(-5.0, exact: false)
     }
 
     @objc public func toggleDiagnostics(_ sender: Any?) {
@@ -292,6 +312,8 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         let appMenu = NSMenu()
         appMenu.addItem(withTitle: "About UPreviewX", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
         appMenu.addItem(.separator())
+        appMenu.addItem(withTitle: "Settings…", action: #selector(openSettings(_:)), keyEquivalent: ",")
+        appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "Hide UPreviewX", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
         appMenu.addItem(withTitle: "Quit UPreviewX", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         appMenuItem.submenu = appMenu
@@ -301,6 +323,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         mainMenu.addItem(fileMenuItem)
         let fileMenu = NSMenu(title: "File")
         fileMenu.addItem(withTitle: "Open…", action: #selector(openDocument(_:)), keyEquivalent: "o")
+        let saveFrameItem = NSMenuItem(title: "Save Current Frame", action: #selector(saveCurrentFrame(_:)), keyEquivalent: "s")
+        saveFrameItem.keyEquivalentModifierMask = [.command, .shift]
+        fileMenu.addItem(saveFrameItem)
         fileMenu.addItem(.separator())
         fileMenu.addItem(withTitle: "Close Window", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
         fileMenuItem.submenu = fileMenu
@@ -312,6 +337,8 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         let playPauseItem = NSMenuItem(title: "Play / Pause", action: #selector(togglePlayPause(_:)), keyEquivalent: " ")
         playPauseItem.keyEquivalentModifierMask = []
         playbackMenu.addItem(playPauseItem)
+        playbackMenu.addItem(withTitle: "Fast-Forward 5s", action: #selector(fastForward(_:)), keyEquivalent: "")
+        playbackMenu.addItem(withTitle: "Rewind 5s", action: #selector(rewind(_:)), keyEquivalent: "")
         playbackMenuItem.submenu = playbackMenu
 
         // View Menu

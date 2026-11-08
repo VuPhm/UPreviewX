@@ -11,6 +11,7 @@ public final class MPVPlaybackEngine: PlaybackEngineProtocol {
 
     public private(set) var currentURL: URL?
     public private(set) var isPaused: Bool = false
+    public private(set) var speed: Double = 1.0
     public private(set) var position: Double = 0.0
     public private(set) var duration: Double = 0.0
     public private(set) var volume: Double = 100.0
@@ -42,6 +43,8 @@ public final class MPVPlaybackEngine: PlaybackEngineProtocol {
     private var pendingScrubTarget: Double?
     private var eofReached = false
     private var pendingLoadURL: URL?
+    private var nextReplyUserdata: UInt64 = 1000
+    private var pendingCommandCallbacks: [UInt64: (Result<Void, PlaybackEngineError>) -> Void] = [:]
 
     // Render update callback hook
     public var onRenderUpdateNeeded: (() -> Void)?
@@ -79,7 +82,8 @@ public final class MPVPlaybackEngine: PlaybackEngineProtocol {
         // Lightweight rendering profile & VideoToolbox hardware decoding with software fallback
         mpv_set_option_string(handle, "vo", useNullVideoOutput ? "null" : "libmpv")
         mpv_set_option_string(handle, "profile", "fast")
-        mpv_set_option_string(handle, "hwdec", "videotoolbox")
+        let hwdecOption = (UserSettings.shared.hardwareAcceleration == .disabled) ? "no" : "videotoolbox"
+        mpv_set_option_string(handle, "hwdec", hwdecOption)
         // On x86_64 Intel Macs, VideoToolbox supports h264, hevc, vp9, prores; AV1 uses libdav1d
         mpv_set_option_string(handle, "hwdec-codecs", "h264,hevc,vp9,prores")
         // OpenGL libmpv render backend does not use lavc direct rendering; disabling avoids a failed probe per file
@@ -135,6 +139,7 @@ public final class MPVPlaybackEngine: PlaybackEngineProtocol {
         mpv_observe_property(handle, 25, "decoder-frame-drop-count", MPV_FORMAT_INT64)
         mpv_observe_property(handle, 26, "avsync", MPV_FORMAT_DOUBLE)
         mpv_observe_property(handle, 27, "video-bitrate", MPV_FORMAT_DOUBLE)
+        mpv_observe_property(handle, 28, "speed", MPV_FORMAT_DOUBLE)
 
         let logLevel = ProcessInfo.processInfo.environment["UPREVIEWX_DEBUG_MPV"] == "1" ? "v" : "error"
         mpv_request_log_messages(handle, logLevel)
@@ -309,7 +314,10 @@ public final class MPVPlaybackEngine: PlaybackEngineProtocol {
         diagnostics.firstFrameLatencyMs = 0
         diagnostics.lastSeekLatencyMs = 0
 
-        // Unpause asynchronously and issue non-blocking loadfile
+        // Unpause asynchronously, reset speed to 1.0, and issue non-blocking loadfile
+        speed = 1.0
+        var initialSpeed: Double = 1.0
+        mpv_set_property_async(handle, 0, "speed", MPV_FORMAT_DOUBLE, &initialSpeed)
         var pauseFlag: Int32 = 0
         mpv_set_property_async(handle, 0, "pause", MPV_FORMAT_FLAG, &pauseFlag)
 
@@ -354,6 +362,19 @@ public final class MPVPlaybackEngine: PlaybackEngineProtocol {
         } else {
             pause()
         }
+    }
+
+    public func setSpeed(_ newSpeed: Double) {
+        stateLock.lock()
+        guard let handle = mpvHandle else {
+            stateLock.unlock()
+            return
+        }
+        stateLock.unlock()
+
+        var clamped = max(0.1, min(16.0, newSpeed))
+        speed = clamped
+        mpv_set_property_async(handle, 0, "speed", MPV_FORMAT_DOUBLE, &clamped)
     }
 
     public func seek(to seconds: Double, exact: Bool = false) {
@@ -477,7 +498,13 @@ public final class MPVPlaybackEngine: PlaybackEngineProtocol {
         renderContext = nil
         let handle = mpvHandle
         mpvHandle = nil
+        let callbacks = pendingCommandCallbacks
+        pendingCommandCallbacks.removeAll()
         stateLock.unlock()
+
+        for (_, cb) in callbacks {
+            cb(.failure(.initializationFailed("Engine shutdown")))
+        }
 
         if let rCtx = rCtx {
             mpv_render_context_set_update_callback(rCtx, nil, nil)
@@ -578,6 +605,24 @@ public final class MPVPlaybackEngine: PlaybackEngineProtocol {
                 }
             }
 
+        case MPV_EVENT_COMMAND_REPLY:
+            let replyId = event.reply_userdata
+            stateLock.lock()
+            let callback = pendingCommandCallbacks.removeValue(forKey: replyId)
+            stateLock.unlock()
+            if let callback = callback {
+                let res: Result<Void, PlaybackEngineError>
+                if event.error < 0 {
+                    let errMessage = String(cString: mpv_error_string(event.error))
+                    res = .failure(.loadFailed(errMessage))
+                } else {
+                    res = .success(())
+                }
+                DispatchQueue.main.async {
+                    callback(res)
+                }
+            }
+
         case MPV_EVENT_PROPERTY_CHANGE:
             guard let dataPtr = event.data else { break }
             let prop = dataPtr.assumingMemoryBound(to: mpv_event_property.self).pointee
@@ -631,6 +676,15 @@ public final class MPVPlaybackEngine: PlaybackEngineProtocol {
             DispatchQueue.main.async { [weak self] in
                 guard let self = self else { return }
                 self.delegate?.playbackEngine(self, didUpdatePause: flag)
+            }
+
+        case "speed":
+            guard property.format == MPV_FORMAT_DOUBLE, let ptr = property.data else { return }
+            let spd = ptr.assumingMemoryBound(to: Double.self).pointee
+            speed = spd
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self else { return }
+                self.delegate?.playbackEngine(self, didUpdateSpeed: spd)
             }
 
         case "volume":
@@ -816,11 +870,18 @@ public final class MPVPlaybackEngine: PlaybackEngineProtocol {
         return ptr.assumingMemoryBound(to: Double.self).pointee
     }
 
-    private func executeCommandAsync(_ args: [String]) -> Int32 {
+    @discardableResult
+    public func executeCommandAsyncWithReply(_ args: [String], completion: ((Result<Void, PlaybackEngineError>) -> Void)? = nil) -> Int32 {
         stateLock.lock()
         guard let handle = mpvHandle, !isShuttingDown else {
             stateLock.unlock()
+            completion?(.failure(.initializationFailed("Engine is not initialized")))
             return Int32(MPV_ERROR_UNINITIALIZED.rawValue)
+        }
+        let replyId = nextReplyUserdata
+        nextReplyUserdata += 1
+        if let completion = completion {
+            pendingCommandCallbacks[replyId] = completion
         }
         stateLock.unlock()
 
@@ -833,8 +894,39 @@ public final class MPVPlaybackEngine: PlaybackEngineProtocol {
         }
         return cArgs.withUnsafeMutableBufferPointer { buf in
             buf.baseAddress!.withMemoryRebound(to: UnsafePointer<CChar>?.self, capacity: buf.count) { constBuf in
-                mpv_command_async(handle, 0, constBuf)
+                mpv_command_async(handle, replyId, constBuf)
             }
+        }
+    }
+
+    @discardableResult
+    private func executeCommandAsync(_ args: [String]) -> Int32 {
+        executeCommandAsyncWithReply(args, completion: nil)
+    }
+
+    /// Captures the unscaled, decoded video frame accurately to disk asynchronously.
+    /// Preserves rotation, pixel aspect ratio, and dynamic range mapping without OSD or window elements.
+    public func captureFrame(to destinationURL: URL, completion: @escaping (Result<URL, PlaybackEngineError>) -> Void) {
+        stateLock.lock()
+        guard mpvHandle != nil, !isShuttingDown else {
+            stateLock.unlock()
+            completion(.failure(.initializationFailed("Engine is not initialized")))
+            return
+        }
+        stateLock.unlock()
+
+        // mode 'video': exact decoded frame, no OSD, no subtitles, correct native rotation
+        let rc = executeCommandAsyncWithReply(["screenshot-to-file", destinationURL.path, "video"]) { result in
+            switch result {
+            case .success:
+                completion(.success(destinationURL))
+            case .failure(let error):
+                completion(.failure(error))
+            }
+        }
+        if rc < 0 {
+            let errString = String(cString: mpv_error_string(rc))
+            completion(.failure(.loadFailed(errString)))
         }
     }
 }

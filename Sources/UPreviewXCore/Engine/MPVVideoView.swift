@@ -130,6 +130,7 @@ public final class MPVVideoLayer: CAOpenGLLayer {
 public final class MPVVideoView: NSView {
     public let videoLayer = MPVVideoLayer()
     public var onDoubleClick: (() -> Void)?
+    public var onContextMenuRequested: ((NSEvent) -> NSMenu?)?
 
     public init(engine: MPVPlaybackEngine) {
         super.init(frame: NSRect(x: 0, y: 0, width: 960, height: 540))
@@ -169,6 +170,13 @@ public final class MPVVideoView: NSView {
         } else {
             super.mouseDown(with: event)
         }
+    }
+
+    public override func menu(for event: NSEvent) -> NSMenu? {
+        if let customMenu = onContextMenuRequested?(event) {
+            return customMenu
+        }
+        return super.menu(for: event)
     }
 }
 

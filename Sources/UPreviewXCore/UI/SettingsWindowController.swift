@@ -1,0 +1,383 @@
+import AppKit
+
+/// Native macOS AppKit Settings window controller.
+public final class SettingsWindowController: NSWindowController {
+    public static let shared = SettingsWindowController()
+
+    private let tabView = NSTabView()
+    private let segmentedControl = NSSegmentedControl()
+
+    // General Controls
+    private let quitOnCloseCheckbox = NSButton(checkboxWithTitle: "Quit when the last video window closes", target: nil, action: nil)
+    private let fitAspectCheckbox = NSButton(checkboxWithTitle: "Open videos and fit window to video aspect ratio", target: nil, action: nil)
+    private let rememberSizeCheckbox = NSButton(checkboxWithTitle: "Remember last window size", target: nil, action: nil)
+
+    // Playback Controls
+    private let hwdecPopup = NSPopUpButton()
+    private let fastSpeedControl = NSSegmentedControl(labels: ["2×", "4×"], trackingMode: .selectOne, target: nil, action: nil)
+    private let seekingBehaviorPopup = NSPopUpButton()
+    private let fastPreviewCheckbox = NSButton(checkboxWithTitle: "Enable Fast Preview Mode by default", target: nil, action: nil)
+    private let autoResumeCheckbox = NSButton(checkboxWithTitle: "Resume playback automatically when opening a file", target: nil, action: nil)
+
+    // Frame Capture Controls
+    private let capturePathField = NSTextField(labelWithString: "")
+    private let capturePatternPopup = NSPopUpButton()
+    private let showConfirmationCheckbox = NSButton(checkboxWithTitle: "Show confirmation banner after saving", target: nil, action: nil)
+
+    public init() {
+        let styleMask: NSWindow.StyleMask = [.titled, .closable]
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 480, height: 320),
+            styleMask: styleMask,
+            backing: .buffered,
+            defer: false
+        )
+        window.title = "UPreviewX Settings"
+        window.center()
+        window.isReleasedWhenClosed = false
+        super.init(window: window)
+
+        setupUI()
+        loadSettings()
+    }
+
+    public required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    public func showSettings() {
+        loadSettings()
+        showWindow(nil)
+        window?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    private func setupUI() {
+        guard let win = window, let contentView = win.contentView else { return }
+
+        // Top Segmented Bar for Tabs
+        segmentedControl.segmentCount = 3
+        segmentedControl.setLabel("General", forSegment: 0)
+        segmentedControl.setLabel("Playback", forSegment: 1)
+        segmentedControl.setLabel("Frame Capture", forSegment: 2)
+        segmentedControl.selectedSegment = 0
+        segmentedControl.target = self
+        segmentedControl.action = #selector(handleTabSegmentChanged(_:))
+        segmentedControl.translatesAutoresizingMaskIntoConstraints = false
+
+        // Tab View
+        tabView.tabViewType = .noTabsNoBorder
+        tabView.translatesAutoresizingMaskIntoConstraints = false
+
+        let generalTab = NSTabViewItem(identifier: "General")
+        generalTab.view = buildGeneralTabView()
+        tabView.addTabViewItem(generalTab)
+
+        let playbackTab = NSTabViewItem(identifier: "Playback")
+        playbackTab.view = buildPlaybackTabView()
+        tabView.addTabViewItem(playbackTab)
+
+        let captureTab = NSTabViewItem(identifier: "FrameCapture")
+        captureTab.view = buildCaptureTabView()
+        tabView.addTabViewItem(captureTab)
+
+        contentView.addSubview(segmentedControl)
+        contentView.addSubview(tabView)
+
+        NSLayoutConstraint.activate([
+            segmentedControl.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 16),
+            segmentedControl.centerXAnchor.constraint(equalTo: contentView.centerXAnchor),
+            segmentedControl.heightAnchor.constraint(equalToConstant: 24),
+
+            tabView.topAnchor.constraint(equalTo: segmentedControl.bottomAnchor, constant: 14),
+            tabView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 20),
+            tabView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -20),
+            tabView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -16)
+        ])
+    }
+
+    // MARK: - Tab Views
+
+    private func buildGeneralTabView() -> NSView {
+        let view = NSView()
+
+        quitOnCloseCheckbox.target = self
+        quitOnCloseCheckbox.action = #selector(handleGeneralSettingChanged)
+
+        fitAspectCheckbox.target = self
+        fitAspectCheckbox.action = #selector(handleGeneralSettingChanged)
+
+        rememberSizeCheckbox.target = self
+        rememberSizeCheckbox.action = #selector(handleGeneralSettingChanged)
+
+        let stack = NSStackView(views: [
+            quitOnCloseCheckbox,
+            fitAspectCheckbox,
+            rememberSizeCheckbox
+        ])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 14
+        stack.translatesAutoresizingMaskIntoConstraints = false
+
+        view.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.topAnchor.constraint(equalTo: view.topAnchor, constant: 12),
+            stack.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
+            stack.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16)
+        ])
+
+        return view
+    }
+
+    private func buildPlaybackTabView() -> NSView {
+        let view = NSView()
+
+        // Hardware Acceleration
+        let hwLabel = NSTextField(labelWithString: "Hardware acceleration:")
+        hwLabel.font = .systemFont(ofSize: 12, weight: .medium)
+        hwdecPopup.removeAllItems()
+        for mode in HardwareAccelerationMode.allCases {
+            hwdecPopup.addItem(withTitle: mode.displayName)
+            hwdecPopup.lastItem?.representedObject = mode
+        }
+        hwdecPopup.target = self
+        hwdecPopup.action = #selector(handlePlaybackSettingChanged)
+
+        let hwNote = NSTextField(labelWithString: "Note: Hardware acceleration changes take effect on next opened file.")
+        hwNote.font = .systemFont(ofSize: 10.5)
+        hwNote.textColor = .secondaryLabelColor
+
+        let hwBox = NSStackView(views: [hwLabel, hwdecPopup, hwNote])
+        hwBox.orientation = .vertical
+        hwBox.alignment = .leading
+        hwBox.spacing = 4
+
+        // Fast Playback Speed
+        let speedLabel = NSTextField(labelWithString: "Temporary fast playback speed:")
+        speedLabel.font = .systemFont(ofSize: 12, weight: .medium)
+        fastSpeedControl.target = self
+        fastSpeedControl.action = #selector(handlePlaybackSettingChanged)
+        let speedBox = NSStackView(views: [speedLabel, fastSpeedControl])
+        speedBox.orientation = .horizontal
+        speedBox.alignment = .centerY
+        speedBox.spacing = 10
+
+        // Fast Seeking Mode
+        let seekLabel = NSTextField(labelWithString: "Fast seeking behavior:")
+        seekLabel.font = .systemFont(ofSize: 12, weight: .medium)
+        seekingBehaviorPopup.removeAllItems()
+        for mode in FastSeekingMode.allCases {
+            seekingBehaviorPopup.addItem(withTitle: mode.displayName)
+            seekingBehaviorPopup.lastItem?.representedObject = mode
+        }
+        seekingBehaviorPopup.target = self
+        seekingBehaviorPopup.action = #selector(handlePlaybackSettingChanged)
+        let seekBox = NSStackView(views: [seekLabel, seekingBehaviorPopup])
+        seekBox.orientation = .horizontal
+        seekBox.alignment = .centerY
+        seekBox.spacing = 10
+
+        // Checkboxes
+        fastPreviewCheckbox.target = self
+        fastPreviewCheckbox.action = #selector(handlePlaybackSettingChanged)
+
+        autoResumeCheckbox.target = self
+        autoResumeCheckbox.action = #selector(handlePlaybackSettingChanged)
+
+        let stack = NSStackView(views: [
+            hwBox,
+            speedBox,
+            seekBox,
+            fastPreviewCheckbox,
+            autoResumeCheckbox
+        ])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 12
+        stack.translatesAutoresizingMaskIntoConstraints = false
+
+        view.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.topAnchor.constraint(equalTo: view.topAnchor, constant: 6),
+            stack.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
+            stack.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16)
+        ])
+
+        return view
+    }
+
+    private func buildCaptureTabView() -> NSView {
+        let view = NSView()
+
+        let folderLabel = NSTextField(labelWithString: "Save captured frames to:")
+        folderLabel.font = .systemFont(ofSize: 12, weight: .medium)
+
+        capturePathField.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
+        capturePathField.lineBreakMode = .byTruncatingMiddle
+        capturePathField.isSelectable = true
+        capturePathField.isEditable = false
+        capturePathField.setContentHuggingPriority(.defaultLow, for: .horizontal)
+
+        let chooseFolderButton = NSButton(title: "Choose…", target: self, action: #selector(handleChooseCaptureFolder))
+        let revealButton = NSButton(title: "Reveal", target: self, action: #selector(handleRevealCaptureFolder))
+
+        let folderRow = NSStackView(views: [capturePathField, chooseFolderButton, revealButton])
+        folderRow.orientation = .horizontal
+        folderRow.alignment = .centerY
+        folderRow.spacing = 8
+
+        let folderBox = NSStackView(views: [folderLabel, folderRow])
+        folderBox.orientation = .vertical
+        folderBox.alignment = .leading
+        folderBox.spacing = 4
+
+        // Image Format
+        let formatLabel = NSTextField(labelWithString: "Image format:")
+        formatLabel.font = .systemFont(ofSize: 12, weight: .medium)
+        let formatPopup = NSPopUpButton()
+        formatPopup.addItem(withTitle: "PNG (Lossless 8-bit)")
+        formatPopup.isEnabled = false
+        let formatNote = NSTextField(labelWithString: "HDR and high-bit-depth streams are tone-mapped to standard 8-bit sRGB PNG.")
+        formatNote.font = .systemFont(ofSize: 10.5)
+        formatNote.textColor = .secondaryLabelColor
+
+        let formatBox = NSStackView(views: [
+            NSStackView(views: [formatLabel, formatPopup]),
+            formatNote
+        ])
+        formatBox.orientation = .vertical
+        formatBox.alignment = .leading
+        formatBox.spacing = 3
+
+        // Filename Pattern
+        let patternLabel = NSTextField(labelWithString: "Filename pattern:")
+        patternLabel.font = .systemFont(ofSize: 12, weight: .medium)
+        capturePatternPopup.removeAllItems()
+        for pat in CaptureFilenamePattern.allCases {
+            capturePatternPopup.addItem(withTitle: pat.displayName)
+            capturePatternPopup.lastItem?.representedObject = pat
+        }
+        capturePatternPopup.target = self
+        capturePatternPopup.action = #selector(handleCaptureSettingChanged)
+        let patternBox = NSStackView(views: [patternLabel, capturePatternPopup])
+        patternBox.orientation = .vertical
+        patternBox.alignment = .leading
+        patternBox.spacing = 4
+
+        // Confirmation Checkbox
+        showConfirmationCheckbox.target = self
+        showConfirmationCheckbox.action = #selector(handleCaptureSettingChanged)
+
+        let stack = NSStackView(views: [
+            folderBox,
+            formatBox,
+            patternBox,
+            showConfirmationCheckbox
+        ])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 11
+        stack.translatesAutoresizingMaskIntoConstraints = false
+
+        view.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.topAnchor.constraint(equalTo: view.topAnchor, constant: 6),
+            stack.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
+            stack.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16)
+        ])
+
+        return view
+    }
+
+    // MARK: - State Management
+
+    private func loadSettings() {
+        let settings = UserSettings.shared
+
+        // General
+        quitOnCloseCheckbox.state = settings.quitWhenLastWindowCloses ? .on : .off
+        fitAspectCheckbox.state = settings.fitWindowToAspectRatio ? .on : .off
+        rememberSizeCheckbox.state = settings.rememberLastWindowSize ? .on : .off
+
+        // Playback
+        for item in hwdecPopup.itemArray {
+            if (item.representedObject as? HardwareAccelerationMode) == settings.hardwareAcceleration {
+                hwdecPopup.select(item)
+                break
+            }
+        }
+        fastSpeedControl.selectedSegment = (settings.temporaryFastSpeed >= 3.0) ? 1 : 0
+        for item in seekingBehaviorPopup.itemArray {
+            if (item.representedObject as? FastSeekingMode) == settings.fastSeekingBehavior {
+                seekingBehaviorPopup.select(item)
+                break
+            }
+        }
+        fastPreviewCheckbox.state = settings.fastPreviewModeByDefault ? .on : .off
+        autoResumeCheckbox.state = settings.autoResumePlaybackOnOpen ? .on : .off
+
+        // Frame Capture
+        capturePathField.stringValue = settings.captureOutputDirectoryURL.path
+        for item in capturePatternPopup.itemArray {
+            if (item.representedObject as? CaptureFilenamePattern) == settings.captureFilenamePattern {
+                capturePatternPopup.select(item)
+                break
+            }
+        }
+        showConfirmationCheckbox.state = settings.showCaptureConfirmation ? .on : .off
+    }
+
+    @objc private func handleTabSegmentChanged(_ sender: NSSegmentedControl) {
+        tabView.selectTabViewItem(at: sender.selectedSegment)
+    }
+
+    @objc private func handleGeneralSettingChanged() {
+        let settings = UserSettings.shared
+        settings.quitWhenLastWindowCloses = (quitOnCloseCheckbox.state == .on)
+        settings.fitWindowToAspectRatio = (fitAspectCheckbox.state == .on)
+        settings.rememberLastWindowSize = (rememberSizeCheckbox.state == .on)
+    }
+
+    @objc private func handlePlaybackSettingChanged() {
+        let settings = UserSettings.shared
+        if let mode = hwdecPopup.selectedItem?.representedObject as? HardwareAccelerationMode {
+            settings.hardwareAcceleration = mode
+        }
+        settings.temporaryFastSpeed = (fastSpeedControl.selectedSegment == 1) ? 4.0 : 2.0
+        if let seekMode = seekingBehaviorPopup.selectedItem?.representedObject as? FastSeekingMode {
+            settings.fastSeekingBehavior = seekMode
+        }
+        settings.fastPreviewModeByDefault = (fastPreviewCheckbox.state == .on)
+        settings.autoResumePlaybackOnOpen = (autoResumeCheckbox.state == .on)
+    }
+
+    @objc private func handleCaptureSettingChanged() {
+        let settings = UserSettings.shared
+        if let pat = capturePatternPopup.selectedItem?.representedObject as? CaptureFilenamePattern {
+            settings.captureFilenamePattern = pat
+        }
+        settings.showCaptureConfirmation = (showConfirmationCheckbox.state == .on)
+    }
+
+    @objc private func handleChooseCaptureFolder() {
+        let panel = NSOpenPanel()
+        panel.title = "Select Frame Capture Directory"
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.canCreateDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.directoryURL = UserSettings.shared.captureOutputDirectoryURL
+
+        if panel.runModal() == .OK, let selectedURL = panel.url {
+            UserSettings.shared.captureOutputDirectoryURL = selectedURL
+            capturePathField.stringValue = selectedURL.path
+        }
+    }
+
+    @objc private func handleRevealCaptureFolder() {
+        let url = UserSettings.shared.captureOutputDirectoryURL
+        try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: url.path)
+    }
+}

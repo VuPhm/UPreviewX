@@ -27,18 +27,24 @@ public final class TimelineSlider: NSSlider {
 /// Designed to compress cleanly inside narrow portrait (9:16) windows without forcing side bars.
 public final class HUDControlsView: NSVisualEffectView {
     public var onPlayPause: (() -> Void)?
+    public var onRewind: (() -> Void)?
+    public var onFastForward: (() -> Void)?
     public var onSeek: ((Double, Bool) -> Void)?
     public var onMuteToggle: (() -> Void)?
     public var onVolumeChange: ((Double) -> Void)?
+    public var onCaptureFrame: (() -> Void)?
     public var onToggleDiagnostics: (() -> Void)?
     public var onToggleFullscreen: (() -> Void)?
 
+    private let rewindButton = NSButton()
     private let playPauseButton = NSButton()
+    private let fastForwardButton = NSButton()
     private let currentTimeLabel = NSTextField(labelWithString: "00:00")
     public let timelineSlider = TimelineSlider(value: 0, minValue: 0, maxValue: 1, target: nil, action: nil)
     private let durationLabel = NSTextField(labelWithString: "00:00")
     private let muteButton = NSButton()
     private let volumeSlider = NSSlider(value: 100, minValue: 0, maxValue: 100, target: nil, action: nil)
+    private let cameraButton = NSButton()
     private let diagButton = NSButton()
     private let fullscreenButton = NSButton()
 
@@ -64,8 +70,10 @@ public final class HUDControlsView: NSVisualEffectView {
         layer?.borderWidth = 0.5
         layer?.borderColor = NSColor.white.withAlphaComponent(0.18).cgColor
 
-        // Play/Pause Button
+        // Transport Buttons
+        configureIconButton(rewindButton, symbolName: "backward.fill", toolTip: "Rewind 5s (Hold ← to shuttle)", action: #selector(handleRewind))
         configureIconButton(playPauseButton, symbolName: "pause.fill", toolTip: "Play / Pause (Space)", action: #selector(handlePlayPause))
+        configureIconButton(fastForwardButton, symbolName: "forward.fill", toolTip: "Fast-Forward 5s (Hold → to shuttle)", action: #selector(handleFastForward))
 
         // Time Labels
         let timeFont = NSFont.monospacedDigitSystemFont(ofSize: 11.0, weight: .medium)
@@ -106,17 +114,21 @@ public final class HUDControlsView: NSVisualEffectView {
         volWidth.isActive = true
         volumeSlider.widthAnchor.constraint(greaterThanOrEqualToConstant: 32).isActive = true
 
-        // Diagnostics & Fullscreen Buttons
+        // Frame Capture, Diagnostics & Fullscreen Buttons
+        configureIconButton(cameraButton, symbolName: "camera.fill", toolTip: "Save Current Frame (⌘⇧S)", action: #selector(handleCaptureFrame))
         configureIconButton(diagButton, symbolName: "gauge.with.dots.needle.bottom.50percent", toolTip: "Toggle Decoder Diagnostics (D / Cmd+I)", action: #selector(handleDiagnostics))
         configureIconButton(fullscreenButton, symbolName: "arrow.up.left.and.arrow.down.right", toolTip: "Toggle Fullscreen (F)", action: #selector(handleFullscreen))
 
         let stack = NSStackView(views: [
+            rewindButton,
             playPauseButton,
+            fastForwardButton,
             currentTimeLabel,
             timelineSlider,
             durationLabel,
             muteButton,
             volumeSlider,
+            cameraButton,
             diagButton,
             fullscreenButton
         ])
@@ -201,8 +213,20 @@ public final class HUDControlsView: NSVisualEffectView {
         }
     }
 
+    @objc private func handleRewind() {
+        onRewind?()
+    }
+
     @objc private func handlePlayPause() {
         onPlayPause?()
+    }
+
+    @objc private func handleFastForward() {
+        onFastForward?()
+    }
+
+    @objc private func handleCaptureFrame() {
+        onCaptureFrame?()
     }
 
     @objc private func handleTimelineAction(_ sender: TimelineSlider) {

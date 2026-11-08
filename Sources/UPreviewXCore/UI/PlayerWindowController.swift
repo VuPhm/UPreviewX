@@ -3,6 +3,7 @@ import AppKit
 /// Custom `NSWindow` that forwards media playback keyboard shortcuts directly to the controller.
 public final class PlayerWindow: NSWindow {
     public var onKeyShortcut: ((NSEvent) -> Bool)?
+    public var onKeyUp: ((NSEvent) -> Bool)?
 
     public override var canBecomeKey: Bool { true }
     public override var canBecomeMain: Bool { true }
@@ -12,6 +13,13 @@ public final class PlayerWindow: NSWindow {
             return
         }
         super.keyDown(with: event)
+    }
+
+    public override func keyUp(with event: NSEvent) {
+        if onKeyUp?(event) == true {
+            return
+        }
+        super.keyUp(with: event)
     }
 }
 
@@ -34,6 +42,33 @@ public final class PlayerWindowController: NSWindowController, NSWindowDelegate,
     private var isProgrammaticWindowResize = false
     private var isFullscreen = false
     private var isControlsHidden = false
+
+    // Safe Shuttle State
+    private enum ShuttleDirection {
+        case forward
+        case rewind
+    }
+
+    private struct ShuttleSession {
+        let direction: ShuttleDirection
+        let wasPaused: Bool
+        let originalSpeed: Double
+        let isKeyframeSeeking: Bool
+    }
+
+    private var activeShuttleSession: ShuttleSession?
+    private var shuttleHoldTimer: Timer?
+    private var shuttleSeekTimer: Timer?
+    private var pendingShuttleDirection: ShuttleDirection?
+
+    // Subtle Visual Indicators
+    private let shuttleBadgeView = NSVisualEffectView()
+    private let shuttleBadgeLabel = NSTextField(labelWithString: "")
+
+    private let toastView = NSVisualEffectView()
+    private let toastLabel = NSTextField(labelWithString: "")
+    private var toastDismissTimer: Timer?
+    private var toastActionURL: URL?
 
     public init(showDiagnostics: Bool = false) {
         let playbackEngine = MPVPlaybackEngine()
@@ -92,12 +127,23 @@ public final class PlayerWindowController: NSWindowController, NSWindowDelegate,
         videoView.onDoubleClick = { [weak self] in
             self?.toggleFullscreen()
         }
+        videoView.onContextMenuRequested = { [weak self] _ in
+            self?.buildContextMenu()
+        }
         container.addSubview(videoView)
 
         // HUD Controls: overlaid compactly on video, adaptable to narrow portrait windows
         hudView.translatesAutoresizingMaskIntoConstraints = false
+        hudView.onRewind = { [weak self] in
+            self?.engine.seekRelative(-5.0, exact: false)
+            self?.resetAutoHideTimer()
+        }
         hudView.onPlayPause = { [weak self] in
             self?.engine.togglePlayPause()
+            self?.resetAutoHideTimer()
+        }
+        hudView.onFastForward = { [weak self] in
+            self?.engine.seekRelative(5.0, exact: false)
             self?.resetAutoHideTimer()
         }
         hudView.onSeek = { [weak self] seconds, exact in
@@ -112,6 +158,10 @@ public final class PlayerWindowController: NSWindowController, NSWindowDelegate,
             self?.engine.setVolume(vol)
             self?.resetAutoHideTimer()
         }
+        hudView.onCaptureFrame = { [weak self] in
+            self?.captureCurrentFrame()
+            self?.resetAutoHideTimer()
+        }
         hudView.onToggleDiagnostics = { [weak self] in
             self?.toggleDiagnosticsOverlay()
             self?.resetAutoHideTimer()
@@ -121,12 +171,53 @@ public final class PlayerWindowController: NSWindowController, NSWindowDelegate,
         }
         container.addSubview(hudView)
 
+        // Subtle Temporary Shuttle Badge
+        shuttleBadgeView.translatesAutoresizingMaskIntoConstraints = false
+        shuttleBadgeView.material = .hudWindow
+        shuttleBadgeView.blendingMode = .withinWindow
+        shuttleBadgeView.state = .active
+        shuttleBadgeView.wantsLayer = true
+        shuttleBadgeView.layer?.cornerRadius = 14
+        shuttleBadgeView.layer?.masksToBounds = true
+        shuttleBadgeView.layer?.borderWidth = 0.5
+        shuttleBadgeView.layer?.borderColor = NSColor.white.withAlphaComponent(0.20).cgColor
+        shuttleBadgeView.alphaValue = 0.0
+
+        shuttleBadgeLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 13, weight: .bold)
+        shuttleBadgeLabel.textColor = .white
+        shuttleBadgeLabel.alignment = .center
+        shuttleBadgeLabel.translatesAutoresizingMaskIntoConstraints = false
+        shuttleBadgeView.addSubview(shuttleBadgeLabel)
+        container.addSubview(shuttleBadgeView)
+
+        // Subtle Toast Notification Pill
+        toastView.translatesAutoresizingMaskIntoConstraints = false
+        toastView.material = .hudWindow
+        toastView.blendingMode = .withinWindow
+        toastView.state = .active
+        toastView.wantsLayer = true
+        toastView.layer?.cornerRadius = 14
+        toastView.layer?.masksToBounds = true
+        toastView.layer?.borderWidth = 0.5
+        toastView.layer?.borderColor = NSColor.white.withAlphaComponent(0.20).cgColor
+        toastView.alphaValue = 0.0
+
+        toastLabel.font = NSFont.systemFont(ofSize: 12, weight: .medium)
+        toastLabel.textColor = .white
+        toastLabel.alignment = .center
+        toastLabel.translatesAutoresizingMaskIntoConstraints = false
+        toastView.addSubview(toastLabel)
+        container.addSubview(toastView)
+
+        let toastClick = NSClickGestureRecognizer(target: self, action: #selector(handleToastClicked))
+        toastView.addGestureRecognizer(toastClick)
+
         // Diagnostics Overlay
         diagnosticsView.translatesAutoresizingMaskIntoConstraints = false
         diagnosticsView.isHidden = !showDiagnostics
         container.addSubview(diagnosticsView)
 
-        let preferredHUDWidth = hudView.widthAnchor.constraint(equalToConstant: 500)
+        let preferredHUDWidth = hudView.widthAnchor.constraint(equalToConstant: 530)
         preferredHUDWidth.priority = .defaultLow
 
         NSLayoutConstraint.activate([
@@ -137,6 +228,22 @@ public final class PlayerWindowController: NSWindowController, NSWindowDelegate,
             hudView.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor, constant: -12),
             hudView.heightAnchor.constraint(equalToConstant: 38),
 
+            shuttleBadgeView.centerXAnchor.constraint(equalTo: container.centerXAnchor),
+            shuttleBadgeView.bottomAnchor.constraint(equalTo: hudView.topAnchor, constant: -10),
+            shuttleBadgeView.heightAnchor.constraint(equalToConstant: 28),
+            shuttleBadgeLabel.leadingAnchor.constraint(equalTo: shuttleBadgeView.leadingAnchor, constant: 14),
+            shuttleBadgeLabel.trailingAnchor.constraint(equalTo: shuttleBadgeView.trailingAnchor, constant: -14),
+            shuttleBadgeLabel.centerYAnchor.constraint(equalTo: shuttleBadgeView.centerYAnchor),
+
+            toastView.centerXAnchor.constraint(equalTo: container.centerXAnchor),
+            toastView.topAnchor.constraint(equalTo: container.topAnchor, constant: 36),
+            toastView.heightAnchor.constraint(equalToConstant: 28),
+            toastView.leadingAnchor.constraint(greaterThanOrEqualTo: container.leadingAnchor, constant: 16),
+            toastView.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor, constant: -16),
+            toastLabel.leadingAnchor.constraint(equalTo: toastView.leadingAnchor, constant: 14),
+            toastLabel.trailingAnchor.constraint(equalTo: toastView.trailingAnchor, constant: -14),
+            toastLabel.centerYAnchor.constraint(equalTo: toastView.centerYAnchor),
+
             diagnosticsView.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 12),
             diagnosticsView.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor, constant: -12),
             diagnosticsView.topAnchor.constraint(equalTo: container.topAnchor, constant: 34)
@@ -145,6 +252,16 @@ public final class PlayerWindowController: NSWindowController, NSWindowDelegate,
         win.onKeyShortcut = { [weak self] event in
             self?.handleKeyDown(event) ?? false
         }
+        win.onKeyUp = { [weak self] event in
+            self?.handleKeyUp(event) ?? false
+        }
+
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleAppDidResignActive),
+            name: NSApplication.didResignActiveNotification,
+            object: nil
+        )
 
         installMouseTracking(on: container)
         if showDiagnostics {
@@ -223,6 +340,11 @@ public final class PlayerWindowController: NSWindowController, NSWindowDelegate,
             return
         }
 
+        guard UserSettings.shared.fitWindowToAspectRatio else {
+            revealWindowIfNeeded()
+            return
+        }
+
         guard size != lastAppliedVideoSize else {
             revealWindowIfNeeded()
             return
@@ -231,7 +353,18 @@ public final class PlayerWindowController: NSWindowController, NSWindowDelegate,
 
         let screenVisible = (win.screen ?? NSScreen.main)?.visibleFrame
             ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
-        let targetFrame = Self.calculateTargetWindowFrame(for: size, in: screenVisible)
+
+        let targetFrame: NSRect
+        if UserSettings.shared.rememberLastWindowSize {
+            let lastSize = UserSettings.shared.lastWindowSize
+            let aspect = size.width / size.height
+            let adjustedHeight = max(240, (lastSize.width / aspect).rounded())
+            let originX = (screenVisible.origin.x + (screenVisible.width - lastSize.width) / 2.0).rounded()
+            let originY = (screenVisible.origin.y + (screenVisible.height - adjustedHeight) / 2.0).rounded()
+            targetFrame = NSRect(x: originX, y: originY, width: lastSize.width, height: adjustedHeight)
+        } else {
+            targetFrame = Self.calculateTargetWindowFrame(for: size, in: screenVisible)
+        }
 
         isProgrammaticWindowResize = true
         win.setFrame(targetFrame, display: true, animate: false)
@@ -251,6 +384,7 @@ public final class PlayerWindowController: NSWindowController, NSWindowDelegate,
     // MARK: - Public Actions
 
     public func openMedia(url: URL) {
+        endShuttle(restoreOriginalState: false)
         lastAppliedVideoSize = .zero
         userDidManuallyResizeWindow = false
         updateWindowTitle(for: url)
@@ -270,6 +404,9 @@ public final class PlayerWindowController: NSWindowController, NSWindowDelegate,
 
         do {
             try engine.load(url: url)
+            if !UserSettings.shared.autoResumePlaybackOnOpen {
+                engine.pause()
+            }
             resetAutoHideTimer()
         } catch let error as PlaybackEngineError {
             revealWindowIfNeeded()
@@ -306,6 +443,246 @@ public final class PlayerWindowController: NSWindowController, NSWindowDelegate,
         window?.title = url.lastPathComponent + suffix
     }
 
+    // MARK: - Safe Shuttle Playback & Seeking
+
+    private func startShuttle(direction: ShuttleDirection) {
+        guard activeShuttleSession == nil else { return }
+        let settings = UserSettings.shared
+        let wasPaused = engine.isPaused
+        let originalSpeed = engine.speed
+
+        let isHeavy = (settings.fastSeekingBehavior == .keyframesOnly) ||
+                      (!engine.diagnostics.isHardwareAccelerated && (engine.diagnostics.rawWidth >= 3840 || engine.diagnostics.width >= 3840))
+
+        let useKeyframeSeeking = (direction == .rewind) || isHeavy || (settings.fastSeekingBehavior != .auto && settings.fastSeekingBehavior != .exact)
+
+        activeShuttleSession = ShuttleSession(
+            direction: direction,
+            wasPaused: wasPaused,
+            originalSpeed: originalSpeed,
+            isKeyframeSeeking: useKeyframeSeeking
+        )
+
+        if useKeyframeSeeking {
+            if !wasPaused {
+                engine.pause()
+            }
+            let step = (direction == .forward) ? 2.0 : -2.0
+            engine.seekRelative(step, exact: false)
+            shuttleSeekTimer?.invalidate()
+            shuttleSeekTimer = Timer.scheduledTimer(withTimeInterval: 0.22, repeats: true) { [weak self] _ in
+                self?.engine.seekRelative(step, exact: false)
+            }
+            let badgeText = (direction == .forward) ? "▶▶ Fast Seeking" : "◀◀ Rewind"
+            showShuttleBadge(text: badgeText)
+        } else {
+            let targetSpeed = settings.temporaryFastSpeed
+            engine.setSpeed(targetSpeed)
+            if wasPaused {
+                engine.play()
+            }
+            showShuttleBadge(text: "▶▶ \(Int(targetSpeed))×")
+        }
+        showControlsImmediately()
+    }
+
+    public func endShuttle(restoreOriginalState: Bool = true) {
+        shuttleHoldTimer?.invalidate()
+        shuttleHoldTimer = nil
+        pendingShuttleDirection = nil
+
+        shuttleSeekTimer?.invalidate()
+        shuttleSeekTimer = nil
+
+        hideShuttleBadge()
+
+        guard let session = activeShuttleSession else { return }
+        activeShuttleSession = nil
+
+        if restoreOriginalState {
+            engine.setSpeed(session.originalSpeed)
+            if session.wasPaused {
+                engine.pause()
+            } else {
+                engine.play()
+            }
+        }
+    }
+
+    private func showShuttleBadge(text: String) {
+        shuttleBadgeLabel.stringValue = text
+        NSAnimationContext.runAnimationGroup { ctx in
+            ctx.duration = 0.15
+            shuttleBadgeView.animator().alphaValue = 1.0
+        }
+    }
+
+    private func hideShuttleBadge() {
+        NSAnimationContext.runAnimationGroup { ctx in
+            ctx.duration = 0.20
+            shuttleBadgeView.animator().alphaValue = 0.0
+        }
+    }
+
+    // MARK: - Frame Capture Workflow
+
+    @objc public func captureCurrentFrame() {
+        guard let url = engine.currentURL else { return }
+        let settings = UserSettings.shared
+        let outputDir = settings.captureOutputDirectoryURL
+        do {
+            try FileManager.default.createDirectory(at: outputDir, withIntermediateDirectories: true)
+        } catch {
+            showToast(message: "Failed to create capture folder: \(error.localizedDescription)", isError: true)
+            return
+        }
+
+        let pos = max(0.0, engine.position)
+        let totalSeconds = Int(pos)
+        let mins = totalSeconds / 60
+        let secs = totalSeconds % 60
+        let millis = Int((pos.truncatingRemainder(dividingBy: 1.0)) * 1000)
+        let timeString = String(format: "%02dm%02d.%03ds", mins, secs, millis)
+
+        let baseName: String
+        switch settings.captureFilenamePattern {
+        case .timestampOnly:
+            baseName = "frame_\(timeString)"
+        case .sourceAndTimestamp:
+            let cleanSource = url.deletingPathExtension().lastPathComponent
+                .replacingOccurrences(of: "/", with: "-")
+                .replacingOccurrences(of: ":", with: "-")
+            baseName = "\(cleanSource)_frame_\(timeString)"
+        }
+
+        var targetURL = outputDir.appendingPathComponent("\(baseName).png")
+        if FileManager.default.fileExists(atPath: targetURL.path) {
+            var counter = 1
+            while FileManager.default.fileExists(atPath: targetURL.path) {
+                targetURL = outputDir.appendingPathComponent("\(baseName)-\(counter).png")
+                counter += 1
+            }
+        }
+
+        engine.captureFrame(to: targetURL) { [weak self] result in
+            guard let self = self else { return }
+            switch result {
+            case .success(let savedURL):
+                if settings.showCaptureConfirmation {
+                    self.showToast(message: "Saved frame: \(savedURL.lastPathComponent)", actionURL: savedURL)
+                }
+            case .failure(let error):
+                self.showToast(message: "Capture failed: \(error.localizedDescription)", isError: true)
+            }
+        }
+    }
+
+    public func showToast(message: String, actionURL: URL? = nil, isError: Bool = false) {
+        toastDismissTimer?.invalidate()
+        toastActionURL = actionURL
+        toastLabel.stringValue = message
+        toastLabel.textColor = isError ? NSColor.systemRed : NSColor.white
+        NSAnimationContext.runAnimationGroup { ctx in
+            ctx.duration = 0.20
+            toastView.animator().alphaValue = 1.0
+        }
+        toastDismissTimer = Timer.scheduledTimer(withTimeInterval: isError ? 3.5 : 2.5, repeats: false) { [weak self] _ in
+            guard let self = self else { return }
+            NSAnimationContext.runAnimationGroup { ctx in
+                ctx.duration = 0.30
+                self.toastView.animator().alphaValue = 0.0
+            }
+        }
+    }
+
+    @objc private func handleToastClicked() {
+        if let url = toastActionURL {
+            NSWorkspace.shared.activateFileViewerSelecting([url])
+        }
+    }
+
+    // MARK: - Context Menu
+
+    public func buildContextMenu() -> NSMenu {
+        let menu = NSMenu(title: "Video Context")
+
+        let captureItem = NSMenuItem(title: "Save Current Frame", action: #selector(contextMenuCaptureFrame), keyEquivalent: "s")
+        captureItem.keyEquivalentModifierMask = [.command, .shift]
+        captureItem.target = self
+        menu.addItem(captureItem)
+
+        menu.addItem(.separator())
+
+        let playPauseTitle = engine.isPaused ? "Play" : "Pause"
+        let playPauseItem = NSMenuItem(title: playPauseTitle, action: #selector(contextMenuPlayPause), keyEquivalent: " ")
+        playPauseItem.keyEquivalentModifierMask = []
+        playPauseItem.target = self
+        menu.addItem(playPauseItem)
+
+        let rewindItem = NSMenuItem(title: "Rewind 5s", action: #selector(contextMenuRewind), keyEquivalent: "")
+        rewindItem.target = self
+        menu.addItem(rewindItem)
+
+        let forwardItem = NSMenuItem(title: "Fast-Forward 5s", action: #selector(contextMenuForward), keyEquivalent: "")
+        forwardItem.target = self
+        menu.addItem(forwardItem)
+
+        menu.addItem(.separator())
+
+        let diagItem = NSMenuItem(title: "Toggle Decoder Diagnostics", action: #selector(contextMenuDiagnostics), keyEquivalent: "i")
+        diagItem.keyEquivalentModifierMask = [.command]
+        diagItem.target = self
+        menu.addItem(diagItem)
+
+        let fastPreviewItem = NSMenuItem(title: "Toggle Fast Preview Mode", action: #selector(contextMenuFastPreview), keyEquivalent: "p")
+        fastPreviewItem.keyEquivalentModifierMask = []
+        fastPreviewItem.target = self
+        menu.addItem(fastPreviewItem)
+
+        menu.addItem(.separator())
+
+        let fullscreenTitle = isFullscreen ? "Exit Full Screen" : "Enter Full Screen"
+        let fsItem = NSMenuItem(title: fullscreenTitle, action: #selector(contextMenuFullscreen), keyEquivalent: "f")
+        fsItem.keyEquivalentModifierMask = [.command, .control]
+        fsItem.target = self
+        menu.addItem(fsItem)
+
+        return menu
+    }
+
+    @objc private func contextMenuCaptureFrame() {
+        captureCurrentFrame()
+    }
+
+    @objc private func contextMenuPlayPause() {
+        engine.togglePlayPause()
+        resetAutoHideTimer()
+    }
+
+    @objc private func contextMenuRewind() {
+        engine.seekRelative(-5.0, exact: false)
+        resetAutoHideTimer()
+    }
+
+    @objc private func contextMenuForward() {
+        engine.seekRelative(5.0, exact: false)
+        resetAutoHideTimer()
+    }
+
+    @objc private func contextMenuDiagnostics() {
+        toggleDiagnosticsOverlay()
+        resetAutoHideTimer()
+    }
+
+    @objc private func contextMenuFastPreview() {
+        toggleFastPreviewMode()
+        resetAutoHideTimer()
+    }
+
+    @objc private func contextMenuFullscreen() {
+        toggleFullscreen()
+    }
+
     // MARK: - Keyboard Shortcuts
 
     private func handleKeyDown(_ event: NSEvent) -> Bool {
@@ -313,26 +690,47 @@ public final class PlayerWindowController: NSWindowController, NSWindowDelegate,
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
 
         if flags.contains(.command) {
+            if flags.contains(.shift) && event.charactersIgnoringModifiers?.lowercased() == "s" {
+                captureCurrentFrame()
+                return true
+            }
             if event.charactersIgnoringModifiers?.lowercased() == "i" {
                 toggleDiagnosticsOverlay()
+                return true
+            }
+            if event.charactersIgnoringModifiers == "," {
+                SettingsWindowController.shared.showSettings()
                 return true
             }
             return false
         }
 
+        if hudView.timelineSlider.isUserScrubbing {
+            return false
+        }
+
         switch event.keyCode {
         case 49: // Space
+            endShuttle(restoreOriginalState: true)
             engine.togglePlayPause()
             return true
         case 123: // Left Arrow
-            let exact = flags.contains(.shift)
-            let step = exact ? -1.0 : -5.0
-            engine.seekRelative(step, exact: exact)
+            if event.isARepeat { return true }
+            if activeShuttleSession != nil || shuttleHoldTimer != nil { return true }
+            pendingShuttleDirection = .rewind
+            shuttleHoldTimer = Timer.scheduledTimer(withTimeInterval: 0.20, repeats: false) { [weak self] _ in
+                self?.shuttleHoldTimer = nil
+                self?.startShuttle(direction: .rewind)
+            }
             return true
         case 124: // Right Arrow
-            let exact = flags.contains(.shift)
-            let step = exact ? 1.0 : 5.0
-            engine.seekRelative(step, exact: exact)
+            if event.isARepeat { return true }
+            if activeShuttleSession != nil || shuttleHoldTimer != nil { return true }
+            pendingShuttleDirection = .forward
+            shuttleHoldTimer = Timer.scheduledTimer(withTimeInterval: 0.20, repeats: false) { [weak self] _ in
+                self?.shuttleHoldTimer = nil
+                self?.startShuttle(direction: .forward)
+            }
             return true
         case 126: // Up Arrow
             engine.setVolume(engine.volume + 5.0)
@@ -361,6 +759,49 @@ public final class PlayerWindowController: NSWindowController, NSWindowDelegate,
         default:
             return false
         }
+    }
+
+    private func handleKeyUp(_ event: NSEvent) -> Bool {
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+
+        switch event.keyCode {
+        case 123: // Left Arrow released
+            if shuttleHoldTimer != nil {
+                shuttleHoldTimer?.invalidate()
+                shuttleHoldTimer = nil
+                pendingShuttleDirection = nil
+                let exact = flags.contains(.shift)
+                let step = exact ? -1.0 : -5.0
+                engine.seekRelative(step, exact: exact)
+                return true
+            } else if activeShuttleSession?.direction == .rewind {
+                endShuttle(restoreOriginalState: true)
+                return true
+            }
+            return false
+
+        case 124: // Right Arrow released
+            if shuttleHoldTimer != nil {
+                shuttleHoldTimer?.invalidate()
+                shuttleHoldTimer = nil
+                pendingShuttleDirection = nil
+                let exact = flags.contains(.shift)
+                let step = exact ? 1.0 : 5.0
+                engine.seekRelative(step, exact: exact)
+                return true
+            } else if activeShuttleSession?.direction == .forward {
+                endShuttle(restoreOriginalState: true)
+                return true
+            }
+            return false
+
+        default:
+            return false
+        }
+    }
+
+    @objc private func handleAppDidResignActive() {
+        endShuttle(restoreOriginalState: true)
     }
 
     // MARK: - Auto-Hiding Unobtrusive Controls
@@ -496,6 +937,10 @@ public final class PlayerWindowController: NSWindowController, NSWindowDelegate,
         }
     }
 
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+    }
+
     // MARK: - NSWindowDelegate
 
     public func windowWillStartLiveResize(_ notification: Notification) {
@@ -504,17 +949,45 @@ public final class PlayerWindowController: NSWindowController, NSWindowDelegate,
         }
     }
 
+    public func windowDidEndLiveResize(_ notification: Notification) {
+        if let win = window, UserSettings.shared.rememberLastWindowSize {
+            UserSettings.shared.lastWindowSize = win.frame.size
+        }
+    }
+
+    public func windowDidResignKey(_ notification: Notification) {
+        endShuttle(restoreOriginalState: true)
+    }
+
+    public func windowDidResignMain(_ notification: Notification) {
+        endShuttle(restoreOriginalState: true)
+    }
+
+    public func windowWillEnterFullScreen(_ notification: Notification) {
+        endShuttle(restoreOriginalState: true)
+    }
+
     public func windowDidEnterFullScreen(_ notification: Notification) {
         isFullscreen = true
+        endShuttle(restoreOriginalState: true)
         hudView.updateFullscreenState(isFullscreen: true)
+    }
+
+    public func windowWillExitFullScreen(_ notification: Notification) {
+        endShuttle(restoreOriginalState: true)
     }
 
     public func windowDidExitFullScreen(_ notification: Notification) {
         isFullscreen = false
+        endShuttle(restoreOriginalState: true)
         hudView.updateFullscreenState(isFullscreen: false)
     }
 
     public func windowWillClose(_ notification: Notification) {
+        endShuttle(restoreOriginalState: false)
+        toastDismissTimer?.invalidate()
+        toastDismissTimer = nil
+        NotificationCenter.default.removeObserver(self)
         initialRevealTimer?.invalidate()
         initialRevealTimer = nil
         hideControlsTimer?.invalidate()

@@ -186,17 +186,268 @@ final class UPreviewXTests: XCTestCase {
         engine.toggleMute()
         XCTAssertTrue(engine.isMuted)
     }
+
+    func testUserSettingsPersistenceAndDefaults() {
+        let testSuiteName = "com.upreviewx.tests.\(UUID().uuidString)"
+        guard let testDefaults = UserDefaults(suiteName: testSuiteName) else {
+            XCTFail("Failed to create test UserDefaults suite")
+            return
+        }
+        defer { testDefaults.removePersistentDomain(forName: testSuiteName) }
+
+        let settings = UserSettings(defaults: testDefaults)
+
+        // Verify Defaults
+        XCTAssertTrue(settings.quitWhenLastWindowCloses)
+        XCTAssertTrue(settings.fitWindowToAspectRatio)
+        XCTAssertFalse(settings.rememberLastWindowSize)
+        XCTAssertEqual(settings.hardwareAcceleration, .auto)
+        XCTAssertEqual(settings.temporaryFastSpeed, 2.0)
+        XCTAssertEqual(settings.fastSeekingBehavior, .auto)
+        XCTAssertFalse(settings.fastPreviewModeByDefault)
+        XCTAssertTrue(settings.autoResumePlaybackOnOpen)
+        XCTAssertEqual(settings.captureImageFormat, "PNG")
+        XCTAssertEqual(settings.captureFilenamePattern, .sourceAndTimestamp)
+        XCTAssertTrue(settings.showCaptureConfirmation)
+
+        // Mutate & Verify
+        settings.quitWhenLastWindowCloses = false
+        XCTAssertFalse(settings.quitWhenLastWindowCloses)
+
+        settings.temporaryFastSpeed = 4.0
+        XCTAssertEqual(settings.temporaryFastSpeed, 4.0)
+
+        settings.temporaryFastSpeed = 2.0
+        XCTAssertEqual(settings.temporaryFastSpeed, 2.0)
+
+        settings.hardwareAcceleration = .disabled
+        XCTAssertEqual(settings.hardwareAcceleration, .disabled)
+
+        settings.fastSeekingBehavior = .keyframesOnly
+        XCTAssertEqual(settings.fastSeekingBehavior, .keyframesOnly)
+
+        settings.captureFilenamePattern = .timestampOnly
+        XCTAssertEqual(settings.captureFilenamePattern, .timestampOnly)
+    }
+
+    func testSpeedControlAndClamping() throws {
+        let engine = MPVPlaybackEngine(useNullVideoOutput: true)
+        defer { engine.shutdown() }
+        try engine.initialize()
+
+        XCTAssertEqual(engine.speed, 1.0)
+
+        engine.setSpeed(2.0)
+        XCTAssertEqual(engine.speed, 2.0, accuracy: 0.01)
+
+        engine.setSpeed(4.0)
+        XCTAssertEqual(engine.speed, 4.0, accuracy: 0.01)
+
+        // Clamp below minimum (0.1)
+        engine.setSpeed(0.005)
+        XCTAssertEqual(engine.speed, 0.1, accuracy: 0.01)
+
+        // Clamp above maximum (16.0)
+        engine.setSpeed(32.0)
+        XCTAssertEqual(engine.speed, 16.0, accuracy: 0.01)
+    }
+
+    func testFrameCaptureGeneratesValidPNG() throws {
+        let ffmpegPath = "/usr/local/bin/ffmpeg"
+        guard FileManager.default.isExecutableFile(atPath: ffmpegPath) else {
+            throw XCTSkip("ffmpeg not found at \(ffmpegPath)")
+        }
+
+        let tempVideoURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("upreviewx_capture_test_\(UUID().uuidString).mp4")
+        let tempCaptureURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("upreviewx_captured_frame_\(UUID().uuidString).png")
+        defer {
+            try? FileManager.default.removeItem(at: tempVideoURL)
+            try? FileManager.default.removeItem(at: tempCaptureURL)
+        }
+
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: ffmpegPath)
+        proc.arguments = [
+            "-y", "-f", "lavfi", "-i", "testsrc2=size=320x240:rate=30:duration=1.5",
+            "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "ultrafast",
+            tempVideoURL.path
+        ]
+        proc.standardOutput = Pipe()
+        proc.standardError = Pipe()
+        try proc.run()
+        proc.waitUntilExit()
+        XCTAssertEqual(proc.terminationStatus, 0)
+
+        let engine = MPVPlaybackEngine(useNullVideoOutput: true)
+        defer { engine.shutdown() }
+
+        let helper = EngineTestDelegate()
+        let frameExp = expectation(description: "media first frame rendered for capture test")
+        helper.onFirstFrame = {
+            frameExp.fulfill()
+        }
+        engine.delegate = helper
+
+        try engine.initialize()
+        try engine.load(url: tempVideoURL)
+        wait(for: [frameExp], timeout: 5.0)
+
+        // Wait slightly for playback position to advance into steady state
+        Thread.sleep(forTimeInterval: 0.15)
+
+        let captureExp = expectation(description: "frame captured")
+        engine.captureFrame(to: tempCaptureURL) { result in
+            switch result {
+            case .success(let url):
+                XCTAssertEqual(url.path, tempCaptureURL.path)
+                captureExp.fulfill()
+            case .failure(let err):
+                XCTFail("Capture failed with error: \(err)")
+            }
+        }
+        wait(for: [captureExp], timeout: 5.0)
+
+        XCTAssertTrue(FileManager.default.fileExists(atPath: tempCaptureURL.path))
+        let fileSize = (try? FileManager.default.attributesOfItem(atPath: tempCaptureURL.path)[.size] as? NSNumber)?.intValue ?? 0
+        XCTAssertGreaterThan(fileSize, 100, "Generated PNG should contain actual image data")
+
+        // Validate that NSImage successfully parses the captured PNG and preserves pixel dimensions
+        let image = NSImage(contentsOf: tempCaptureURL)
+        XCTAssertNotNil(image)
+        if let rep = image?.representations.first {
+            XCTAssertEqual(rep.pixelsWide, 320)
+            XCTAssertEqual(rep.pixelsHigh, 240)
+        }
+    }
+
+    func testContextMenuContainsRequiredActions() {
+        let controller = PlayerWindowController(showDiagnostics: false)
+        let menu = controller.buildContextMenu()
+
+        let itemTitles = menu.items.map { $0.title }
+        XCTAssertTrue(itemTitles.contains("Save Current Frame"))
+        XCTAssertTrue(itemTitles.contains("Play") || itemTitles.contains("Pause"))
+        XCTAssertTrue(itemTitles.contains("Rewind 5s"))
+        XCTAssertTrue(itemTitles.contains("Fast-Forward 5s"))
+        XCTAssertTrue(itemTitles.contains("Toggle Decoder Diagnostics"))
+        XCTAssertTrue(itemTitles.contains("Toggle Fast Preview Mode"))
+        XCTAssertTrue(itemTitles.contains("Enter Full Screen") || itemTitles.contains("Exit Full Screen"))
+
+        let captureItem = menu.items.first { $0.title == "Save Current Frame" }
+        XCTAssertNotNil(captureItem)
+        XCTAssertEqual(captureItem?.keyEquivalent, "s")
+        XCTAssertEqual(captureItem?.keyEquivalentModifierMask, [.command, .shift])
+    }
+
+    func testSettingsWindowControllerSetup() {
+        let settingsWin = SettingsWindowController.shared
+        XCTAssertNotNil(settingsWin.window)
+        XCTAssertEqual(settingsWin.window?.title, "UPreviewX Settings")
+    }
+
+    func testPressAndHoldShuttleStateTransitionsAndKeyRepeat() {
+        let controller = PlayerWindowController(showDiagnostics: false)
+        guard let win = controller.window as? PlayerWindow else {
+            XCTFail("Window should be PlayerWindow")
+            return
+        }
+
+        // Initially at 1.0x speed
+        XCTAssertEqual(controller.engine.speed, 1.0)
+
+        // 1. Simulate key hold on Right Arrow (keyCode 124)
+        guard let keyDownEvent = NSEvent.keyEvent(
+            with: .keyDown,
+            location: .zero,
+            modifierFlags: [],
+            timestamp: ProcessInfo.processInfo.systemUptime,
+            windowNumber: win.windowNumber,
+            context: nil,
+            characters: "",
+            charactersIgnoringModifiers: "",
+            isARepeat: false,
+            keyCode: 124
+        ) else {
+            XCTFail("Failed to create keyDown event")
+            return
+        }
+
+        win.keyDown(with: keyDownEvent)
+
+        // Wait 250ms for hold timer to trigger shuttle mode
+        let exp = expectation(description: "shuttle activated")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+            // Speed should now be fast speed (2.0x)
+            XCTAssertEqual(controller.engine.speed, 2.0, accuracy: 0.1)
+
+            // Simulate repeated keydown events during hold (key repeat)
+            if let repeatEvent = NSEvent.keyEvent(
+                with: .keyDown,
+                location: .zero,
+                modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime,
+                windowNumber: win.windowNumber,
+                context: nil,
+                characters: "",
+                charactersIgnoringModifiers: "",
+                isARepeat: true,
+                keyCode: 124
+            ) {
+                win.keyDown(with: repeatEvent)
+                // Speed remains 2.0x, does not break or crash
+                XCTAssertEqual(controller.engine.speed, 2.0, accuracy: 0.1)
+            }
+
+            // 2. Simulate keyUp on Right Arrow
+            if let keyUpEvent = NSEvent.keyEvent(
+                with: .keyUp,
+                location: .zero,
+                modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime,
+                windowNumber: win.windowNumber,
+                context: nil,
+                characters: "",
+                charactersIgnoringModifiers: "",
+                isARepeat: false,
+                keyCode: 124
+            ) {
+                win.keyUp(with: keyUpEvent)
+                // Speed must be restored to original 1.0x immediately
+                XCTAssertEqual(controller.engine.speed, 1.0, accuracy: 0.1)
+            }
+            exp.fulfill()
+        }
+
+        wait(for: [exp], timeout: 2.0)
+
+        // 3. Focus loss cancels shuttle and restores state
+        win.keyDown(with: keyDownEvent)
+        let focusExp = expectation(description: "shuttle cancelled on focus loss")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+            XCTAssertEqual(controller.engine.speed, 2.0, accuracy: 0.1)
+            // Trigger resign key
+            controller.windowDidResignKey(Notification(name: NSWindow.didResignKeyNotification))
+            XCTAssertEqual(controller.engine.speed, 1.0, accuracy: 0.1)
+            focusExp.fulfill()
+        }
+        wait(for: [focusExp], timeout: 2.0)
+    }
 }
 
 private final class EngineTestDelegate: PlaybackEngineDelegate {
     var onLoaded: (() -> Void)?
+    var onFirstFrame: (() -> Void)?
     var onSizeUpdated: ((CGSize) -> Void)?
     private var didFulfillSize = false
 
     func playbackEngineDidLoadFile(_ engine: PlaybackEngineProtocol) {
         onLoaded?()
     }
-    func playbackEngineDidRenderFirstFrame(_ engine: PlaybackEngineProtocol, latencyMs: Double) {}
+    func playbackEngineDidRenderFirstFrame(_ engine: PlaybackEngineProtocol, latencyMs: Double) {
+        onFirstFrame?()
+    }
     func playbackEngine(_ engine: PlaybackEngineProtocol, didUpdatePosition position: Double, duration: Double) {}
     func playbackEngine(_ engine: PlaybackEngineProtocol, didUpdatePause isPaused: Bool) {}
     func playbackEngine(_ engine: PlaybackEngineProtocol, didUpdateVolume volume: Double, isMuted: Bool) {}

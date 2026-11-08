@@ -1,4 +1,4 @@
-.PHONY: all libs build test app run clean
+.PHONY: all libs build test app install reinstall uninstall run clean
 
 all: app
 
@@ -13,6 +13,20 @@ test: libs
 
 app:
 	./Scripts/build_app.sh release
+	@if [ -d "$$HOME/Applications/UPreviewX.app" ]; then \
+		./Scripts/install_app.sh --no-build; \
+	fi
+
+install:
+	./Scripts/install_app.sh
+
+reinstall:
+	./Scripts/install_app.sh --clean
+
+uninstall:
+	killall UPreviewX 2>/dev/null || true
+	/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -u "$$HOME/Applications/UPreviewX.app" 2>/dev/null || true
+	rm -rf "$$HOME/Applications/UPreviewX.app"
 
 clean:
 	swift package clean
