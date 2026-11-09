@@ -2,32 +2,34 @@ name: CI
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, "feature/*", "release/*" ]
   pull_request:
     branches: [ main ]
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build-and-test:
-    name: Build & Test (macOS x86_64)
-    runs-on: macos-14
+    name: Build & Test (macOS Intel x86_64)
+    runs-on: macos-13
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install libmpv via Homebrew (CI only)
+      - name: Install dependencies (libmpv via Homebrew)
         run: |
-          if ! brew list mpv >/dev/null 2>&1; then
-            brew install mpv
-          fi
+          brew install mpv
 
-      - name: Prepare x86_64 runtime libraries
-        run: |
-          # On arm64 GitHub runners, allow building/testing with available arch or x86_64
-          ./Scripts/prepare_libs.sh
+      - name: Compile application
+        run: make build
 
-      - name: Build & Package UPreviewX
-        run: |
-          HOST_ARCH="$(uname -m)"
-          swift build -c release --arch "${HOST_ARCH}"
-          swift test --arch "${HOST_ARCH}"
+      - name: Run verification test suite
+        run: make test
 
+      - name: Package distribution artifacts
+        run: make package
+
+      - name: Run release pre-flight check
+        run: make release-check

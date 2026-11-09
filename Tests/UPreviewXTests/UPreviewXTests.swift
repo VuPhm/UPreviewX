@@ -135,10 +135,38 @@ final class UPreviewXTests: XCTestCase {
         }
     }
 
+    private func findFFmpeg() -> String? {
+        let candidates = [
+            "/usr/local/bin/ffmpeg",
+            "/opt/homebrew/bin/ffmpeg",
+            "/usr/bin/ffmpeg"
+        ]
+        for path in candidates {
+            if FileManager.default.isExecutableFile(atPath: path) {
+                return path
+            }
+        }
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: "/usr/bin/which")
+        proc.arguments = ["ffmpeg"]
+        let pipe = Pipe()
+        proc.standardOutput = pipe
+        if (try? proc.run()) != nil {
+            proc.waitUntilExit()
+            if proc.terminationStatus == 0 {
+                let data = pipe.fileHandleForReading.readDataToEndOfFile()
+                if let path = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
+                   !path.isEmpty, FileManager.default.isExecutableFile(atPath: path) {
+                    return path
+                }
+            }
+        }
+        return nil
+    }
+
     func testEnginePlaybackAndControlsWithGeneratedSample() throws {
-        let ffmpegPath = "/usr/local/bin/ffmpeg"
-        guard FileManager.default.isExecutableFile(atPath: ffmpegPath) else {
-            throw XCTSkip("ffmpeg not found at \(ffmpegPath)")
+        guard let ffmpegPath = findFFmpeg() else {
+            throw XCTSkip("ffmpeg executable not found")
         }
 
         let tempURL = FileManager.default.temporaryDirectory
@@ -253,9 +281,8 @@ final class UPreviewXTests: XCTestCase {
     }
 
     func testFrameCaptureGeneratesValidPNG() throws {
-        let ffmpegPath = "/usr/local/bin/ffmpeg"
-        guard FileManager.default.isExecutableFile(atPath: ffmpegPath) else {
-            throw XCTSkip("ffmpeg not found at \(ffmpegPath)")
+        guard let ffmpegPath = findFFmpeg() else {
+            throw XCTSkip("ffmpeg executable not found")
         }
 
         let tempVideoURL = FileManager.default.temporaryDirectory

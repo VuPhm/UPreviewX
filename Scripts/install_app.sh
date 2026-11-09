@@ -36,22 +36,17 @@ if [ "${DO_BUILD}" -eq 1 ] || [ ! -d "${DIST_APP}" ]; then
     "${ROOT_DIR}/Scripts/build_app.sh" release
 fi
 
-echo "==> Removing stale installations and LaunchServices entries..."
+echo "==> Removing stale bundle at ${TARGET_APP}..."
 if [ -x "${LSREGISTER}" ]; then
     "${LSREGISTER}" -u "${TARGET_APP}" 2>/dev/null || true
-    "${LSREGISTER}" -u "/Applications/${APP_NAME}" 2>/dev/null || true
     "${LSREGISTER}" -u "${DIST_APP}" 2>/dev/null || true
 fi
 
 rm -rf "${TARGET_APP}"
-if [ -d "/Applications/${APP_NAME}" ] && [ -w "/Applications" ]; then
-    rm -rf "/Applications/${APP_NAME}"
-fi
 
 mkdir -p "${USER_APPS_DIR}"
 echo "==> Installing clean bundle to ${TARGET_APP}..."
 ditto "${DIST_APP}" "${TARGET_APP}"
-xattr -cr "${TARGET_APP}" 2>/dev/null || true
 touch "${TARGET_APP}"
 
 echo "==> Verifying code signature..."
@@ -59,20 +54,16 @@ codesign --verify --deep --strict "${TARGET_APP}"
 
 if [ -x "${LSREGISTER}" ]; then
     echo "==> Registering ${TARGET_APP} with macOS LaunchServices..."
-    # Unregister build output copy so LaunchServices strictly resolves to ~/Applications/UPreviewX.app
     "${LSREGISTER}" -u "${DIST_APP}" 2>/dev/null || true
     "${LSREGISTER}" -f -R -trusted "${TARGET_APP}"
 fi
 
-echo "==> Refreshing macOS icon & Finder/Dock caches..."
+echo "==> Notifying macOS file system and LaunchServices..."
 swift -e '
 import AppKit
 let path = CommandLine.arguments[1]
 NSWorkspace.shared.noteFileSystemChanged(path)
 ' "${TARGET_APP}" 2>/dev/null || true
 
-killall iconservicesagent 2>/dev/null || true
-killall Dock 2>/dev/null || true
-killall Finder 2>/dev/null || true
-
 echo "==> Successfully installed UPreviewX to: ${TARGET_APP}"
+echo "==> User preferences preserved in ~/Library/Preferences/com.vuphm.upreviewx.plist"

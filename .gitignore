@@ -7,4 +7,7 @@ Vendor/lib/
 *.xcodeproj
 *.xcworkspace
 DerivedData/
-
+*.swp
+*~
+.cache/
+*.log

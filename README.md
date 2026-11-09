@@ -1,220 +1,144 @@
-# UPreviewX
+# UPreviewX — Ứng dụng xem nhanh video native siêu nhẹ cho macOS
 
 <p align="center">
-  <img src="Resources/AppIcon.png" width="128" height="128" alt="UPreviewX App Icon" />
+  <img src="Resources/AppIcon.png" width="128" height="128" alt="UPreviewX Icon" />
 </p>
 
-**UPreviewX** is a lightweight, native macOS video preview utility (`Swift` + `AppKit`, `x86_64`) optimized for the **Intel MacBook Pro 16-inch (2019)** (Intel Core i7-9750H, 16 GB RAM, Intel UHD Graphics 630 + AMD Radeon Pro 5300M).
+[![Release](https://img.shields.io/badge/release-v0.3.0--beta-blue.svg)](https://github.com/VuPhm/UPreviewX/releases)
+[![Platform](https://img.shields.io/badge/platform-macOS%2013.0%2B-brightgreen.svg)]()
+[![Architecture](https://img.shields.io/badge/arch-Intel%20x86__64-orange.svg)]()
+[![License](https://img.shields.io/badge/license-GPLv2%2B-lightgrey.svg)](LICENSE)
 
-It delivers a fast, minimal, single-window preview experience similar to QuickTime / QuickLook while leveraging **libmpv + FFmpeg + VideoToolbox + dav1d** (the playback foundation of IINA) for broad codec and container compatibility.
+**UPreviewX** là tiện ích xem trước video native nhẹ, hiệu năng cao dành cho macOS (`Swift` + `AppKit`, `x86_64`), tối ưu hóa đặc biệt cho dòng **Intel MacBook Pro 16-inch (2019)**.
 
----
-
-## Key Features & UX
-
-- **Direct Video Window (No Home Screen)**: Double-clicking a supported video in Finder or using **Open With → UPreviewX** opens the video window immediately and begins playback.
-- **Adaptive Aspect-Ratio Window Sizing**:
-  - Automatically sizes and centers the player window to fit the **actual display aspect ratio** of the video (`9:16` and `4:5` portrait, `1:1` square, `16:9` and `21:9` landscape) without opening vertical videos inside a 16:9 box with side black bars.
-  - Accounts for container display rotation metadata (`90°` / `270°`), sample aspect ratio (`SAR`), and display aspect ratio (`DAR`), not just coded width/height.
-  - Constrains oversized windows (e.g., 4K `3840×2160` or `2160×3840`) to `NSScreen.visibleFrame` (respecting the macOS menu bar and Dock) and locks `NSWindow.aspectRatio` so manual resizing preserves video proportions.
-  - Reveals the window only once video display geometry is resolved (or after a short 180 ms fallback) so portrait/square videos never flash inside a default 16:9 frame.
-- **Quit-on-Last-Window-Close Lifecycle**: Closing the video window terminates the application completely (`applicationShouldTerminateAfterLastWindowClosed = true`). It never remains resident in the background.
-- **Transport UX: Separation of Fast Seeking from Speed Playback**:
-  - **Fast Seeking / Shuttle**: Rapid timeline navigation using efficient keyframe seeking. Press-and-hold navigation keys (default: `←` / `→`) triggers smooth shuttle seeking without decoder queue accumulation or decoder stalls. Releasing the key restores the exact prior state (paused remains paused, playing resumes playing). Automatically adjusts seek frequency for heavy software-decoded codecs. Short press continues to perform precise short-step seeking.
-  - **Speed Playback**: Continuous video playback at different speeds with pitch-corrected audio synchronization. Features a dedicated **1× / 2× speed toggle** in both the HUD and keyboard shortcuts (default: `2`), clearly distinguished from timeline shuttling.
-- **Compact Playback HUD**:
-  - Streamlined floating controls optimized for portrait (`9:16`) windows without clipping or forcing wide bars.
-  - **Expandable Volume**: Compact speaker icon by default reserving zero horizontal space; hovering or clicking expands the volume slider, smoothly auto-collapsing after mouse exit with a 350 ms flicker-prevention delay while preserving quick mute/unmute.
-  - **Essential Primary Controls**: Play/Pause, timeline scrubber, compact rewind/forward, expandable volume, 1×/2× speed toggle, and fullscreen.
-  - **Secondary Actions Overflow Menu**: Native ellipsis (`…`) button grouping Save Current Frame, Playback Diagnostics, Fast Preview Mode, and Settings.
-- **Customizable Keyboard Shortcuts**:
-  - Native AppKit Settings tab with an interactive shortcut recorder.
-  - Custom key bindings for Play/Pause, Seek Backward/Forward, Hold to Shuttle Backward/Forward, Toggle 1×/2× Playback, Save Frame, Toggle Diagnostics, Fast Preview Mode, Mute, and Fullscreen.
-  - Displays standard macOS conventions (`⌘`, `⌥`, `⇧`, `⌃`).
-  - Real-time conflict detection and prevention of accidental overrides for essential system shortcuts (`⌘Q`, `⌘W`, `⌘H`, `⌘M`, `⌘,`).
-  - Supports individual shortcut reset and "Restore All Defaults", persisted in `UserDefaults`.
-- **Dual-GPU Power Awareness (MBP 2019)**: Configures `NSSupportsAutomaticGraphicsSwitching` in `Info.plist`, `kCGLPFASupportsAutomaticGraphicsSwitching` + `kCGLPFAAllowOfflineRenderers`, and explicitly selects the integrated **Intel UHD Graphics 630** virtual screen via `CGLSetVirtualScreen` (`cmpv_prefer_integrated_gpu`) even when another process has powered on the discrete **AMD Radeon Pro 5300M**.
-- **Two-Tier Responsive Timeline Scrubbing**: Uses coalesced keyframe seeking (`absolute+keyframes`) while dragging the timeline slider for fast scrubbing across long GOPs, followed by an exact frame-accurate seek (`absolute+exact`) on mouse release.
-- **Optional Fast Preview Mode (`P` Key / `--fast-preview`)**: Strictly opt-in preview mode (`vd-lavc-skiploopfilter=all` + `vd-lavc-fast=yes`) that accelerates decoding and Long-GOP seeking on heavy software-decoded 4K streams without ever silently lowering fidelity by default.
-- **Developer Decoder Diagnostics (`D` or `Cmd+I`)**: Built-in real-time overlay reporting file size, container, codec, pixel format, active decode path (`Hardware (videotoolbox)` vs. `Software (FFmpeg/dav1d fallback)` vs. `Software (Fast Preview Mode)`), active GPU renderer, coded vs. display resolution, rotation, bitrate, nominal/effective FPS, dropped frames, A/V sync offset, engine init latency, first-frame latency, seek latency, CPU %, and current/peak RSS memory.
-- **Standalone Self-Contained App Bundle**: All required `x86_64` `libmpv` and `FFmpeg` runtime `.dylib` files are thinned, signed, and bundled inside `UPreviewX.app/Contents/Frameworks/` via `@rpath` (`@executable_path/../Frameworks`). Homebrew is **not** required at runtime.
+Ứng dụng mang lại trải nghiệm xem nhanh tức thì như QuickTime / QuickLook nhưng sở hữu sức mạnh giải mã toàn diện từ **libmpv + FFmpeg + VideoToolbox + dav1d**, tự động thích ứng với mọi tỷ lệ khung hình video mà không có bất kỳ tiến trình chạy ngầm nào.
 
 ---
 
-## Architecture
+## 1. Tải về & Cài đặt nhanh
+
+Các tệp cài đặt chính thức được phát hành tại trang [GitHub Releases](https://github.com/VuPhm/UPreviewX/releases):
+
+| Tệp phân phối | Định dạng | Mô tả |
+|---|---|---|
+| **[`UPreviewX-v0.3.0-macos-x86_64.dmg`](https://github.com/VuPhm/UPreviewX/releases/download/v0.3.0-beta/UPreviewX-v0.3.0-macos-x86_64.dmg)** | **Apple Disk Image** | **Khuyên dùng:** Kéo-thả vào Applications, sẵn sàng sử dụng. |
+| **`UPreviewX-v0.3.0-macos-x86_64.zip`** | Portable ZIP | Bản chạy trực tiếp không cần mount đĩa. |
+| **`SHA256SUMS`** | Checksum Text | Mã băm kiểm tra tính toàn vẹn của tệp cài đặt. |
+
+### Các bước cài đặt:
+1. Tải tệp **`UPreviewX-v0.3.0-macos-x86_64.dmg`**.
+2. Nhấp đúp mở file `.dmg`, kéo biểu tượng **`UPreviewX`** vào thư mục **`Applications`**.
+3. Mở `Applications` và khởi chạy `UPreviewX` lần đầu tiên.
+
+---
+
+## 2. Hướng dẫn cấp quyền mở lần đầu (Gatekeeper Trust UX)
+
+UPreviewX là phần mềm mã nguồn mở độc lập và được ký số ad-hoc hợp lệ (`codesign --sign -`). Khi mở ứng dụng lần đầu trên macOS 13+, Gatekeeper có thể hiển thị cảnh báo từ chối do chưa đăng ký tài khoản trả phí Apple Developer ID:
 
 ```text
-Sources/
-├── CMPV/                               # C module, CGL virtual-screen selector & Mach usage shim
-│   ├── include/mpv_shim.h
-│   ├── include/module.modulemap
-│   └── shim.c
-├── UPreviewXCore/
-│   ├── Engine/                         # Isolated playback engine & rendering layer
-│   │   ├── PlaybackDiagnostics.swift
-│   │   ├── PlaybackEngineProtocol.swift
-│   │   ├── MPVPlaybackEngine.swift     # 100% async property/command pipeline over libmpv
-│   │   └── MPVVideoView.swift          # NSView + CAOpenGLLayer (mpv_render_context)
-│   ├── Services/                       # Reserved conversion interface (decoupled)
-│   │   └── ConversionServiceProtocol.swift
-│   ├── Settings/                       # Centralized, typed user preferences & shortcuts
-│   │   ├── UserSettings.swift
-│   │   └── KeyShortcut.swift
-│   └── UI/                             # Native AppKit adaptive window & HUD controls
-│       ├── PlayerWindowController.swift
-│       ├── HUDControlsView.swift
-│       ├── DiagnosticsOverlayView.swift
-│       ├── SettingsWindowController.swift
-│       └── TimeFormatter.swift
-└── UPreviewX/                          # Application lifecycle & CLI benchmark runner
-    ├── AppDelegate.swift
-    └── main.swift
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                       QUY TRÌNH MỞ ỨNG DỤNG LẦN ĐẦU                         │
+│            (Chuẩn của Apple trên macOS 13 Ventura, 14 Sonoma, 15+)          │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  Cách 1 — Mở nhanh qua Finder (Khuyên dùng):                                │
+│    1. Mở Finder, truy cập thư mục Applications.                             │
+│    2. Nhấp chuột phải (hoặc giữ phím Control và bấm chuột) vào UPreviewX.   │
+│    3. Chọn "Open" (Mở) từ menu ngữ cảnh.                                    │
+│    4. Trong hộp thoại bảo mật xuất hiện, bấm nút [Open] (Mở).                │
+│                                                                             │
+│  Cách 2 — Xác nhận qua Cài đặt hệ thống (System Settings):                 │
+│    1. Mở System Settings (Cài đặt hệ thống) → Privacy & Security.           │
+│    2. Cuộn xuống mục Security (Bảo mật).                                    │
+│    3. Tại dòng thông báo chặn UPreviewX, bấm nút [Open Anyway] (Vẫn mở).    │
+│    4. Nhập mật khẩu máy Mac hoặc Touch ID để hoàn tất.                      │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
 ```
 
----
-
-## 1. Adaptive Window Sizing Validation (Suite A)
-
-Validated on the target **MacBook Pro 16-inch (2019)** (`1792×1120` logical points, `NSScreen.visibleFrame` constraining max initial window height to `908 pt` and width to `1612 pt`):
-
-| Test Video | Coded Resolution | Rotation / SAR | Effective Display Resolution | Video Aspect | Window Size (`pt`) | Window Aspect | Side / Top Black Bars |
-|------------|------------------|----------------|------------------------------|--------------|--------------------|---------------|-----------------------|
-| `portrait_9_16.mp4` | `1080×1920` | `0°` / `1:1` | `1080×1920` | `0.563` (`9:16`) | **`511×908`** | **`0.563`** | None (0 px) |
-| `ADS - T9 - KB1 - VERTIKTOK.mp4` | `1080×1920` | `0°` / `1:1` | `1080×1920` | `0.563` (`9:16`) | **`511×908`** | **`0.563`** | None (0 px) |
-| `C2378.MP4` (4K Rotated Camera Clip) | `3840×2160` | **`270°`** / `1:1` | **`2160×3840`** | `0.563` (`9:16`) | **`511×908`** | **`0.563`** | None (0 px) |
-| `C3585.MP4` (4K Rotated Sony XAVC) | `3840×2160` | **`270°`** / `1:1` | **`2160×3840`** | `0.563` (`9:16`) | **`511×908`** | **`0.563`** | None (0 px) |
-| `portrait_4_5.mp4` | `1080×1350` | `0°` / `1:1` | `1080×1350` | `0.800` (`4:5`) | **`726×908`** | **`0.800`** | None (0 px) |
-| `square_1_1.mp4` | `1080×1080` | `0°` / `1:1` | `1080×1080` | `1.000` (`1:1`) | **`908×908`** | **`1.000`** | None (0 px) |
-| `landscape_16_9.mp4` | `1920×1080` | `0°` / `1:1` | `1920×1080` | `1.778` (`16:9`) | **`1612×907`** | **`1.777`** | None (0 px) |
-| `anamorphic_sar_16_9.mp4` | `1440×1080` | `0°` / **`SAR 4:3`** | **`1920×1080`** | `1.778` (`16:9`) | **`1612×907`** | **`1.777`** | None (0 px) |
-| `ultrawide_21_9.mp4` | `2520×1080` | `0°` / `1:1` | `2520×1080` | `2.333` (`21:9`) | **`1612×691`** | **`2.333`** | None (0 px) |
+> [!TIP]
+> Bạn chỉ cần thực hiện thao tác này **duy nhất một lần**. macOS sẽ lưu ghi nhận và các lần sau bạn có thể mở video bằng cách nhấp đúp hoặc qua menu chuột phải **Open With → UPreviewX** bình thường.
 
 ---
 
-## 2. Heavy Video Performance Optimization & Benchmarks (Suite B)
+## 3. Điểm nổi bật & Tính năng chính
 
-### Three Distinct Performance Concerns Addressed
-
-1. **Large File Size & Local I/O**:
-   - Disabled unnecessary stream caching (`cache=no`) and bounded demuxer readahead (`demuxer-readahead-secs=1.0`, `demuxer-max-bytes=64MiB`, `demuxer-max-back-bytes=32MiB`).
-   - Result: Opening and seeking across a **9.9 GB (`9898.8 MB`) 4K60 10-bit HEVC file** (`large_10gb_4k60_hevc10.mp4`, 102.7 Mbps) consumes only **`120.9 MB` peak RSS memory** (identical to an 800 MB clip), with `149.95 ms` first-frame latency and `44.38 ms` keyframe seek latency.
-2. **Computationally Expensive Decoding**:
-   - Eliminated a 2-thread rendezvous stall between `vo_libmpv` and synchronous `mpv_get_property`/`mpv_command` calls by converting `MPVPlaybackEngine` to a **100% asynchronous event-driven pipeline** (`mpv_observe_property` across 27 properties + `mpv_command_async` + `mpv_set_property_async`).
-   - Tuned `vd-lavc-threads=8` (`vd-lavc-dr=no`) for the 6-core / 12-thread Intel Core i7-9750H, allowing real **1.60 GB 4K 29.97fps Sony XAVC H.264 High 4:2:2 10-bit (`149 Mbps`)** camera footage (`C3585.MP4`) to software-decode at full **`29.97 / 29.97 fps` with `0` dropped frames** (`306.3%` CPU).
-3. **Rendering & Long-GOP Seeking Overhead**:
-   - Configured lightweight GPU texture scaling (`scale=bilinear`, `dscale=bilinear`, `cscale=bilinear`, `correct-downscaling=no`, ` hdr-compute-peak=no`) on the integrated **Intel UHD Graphics 630**.
-   - Implemented coalesced keyframe scrubbing (`exact: false` → `absolute+keyframes`) during slider drag and accurate seeking (`exact: true` → `absolute+exact`) on slider release, reducing seek latency across 250-frame 4K60 GOPs from `909.24 ms` (exact) to **`92.22 ms` (keyframe scrub)** (**9.8× faster**).
-
-### Heavy 4K, High-Bitrate, Long-Duration, VFR & 10 GB Benchmark Table
-
-Measured on the target **2019 MacBook Pro 16-inch** (`Intel Core i7-9750H @ 2.60 GHz`, `16 GB RAM`, active GPU: `Intel(R) UHD Graphics 630`):
-
-- **Cold-Start to Native Window Ready**: `96.7–126.2 ms`
-- **Cold-Launch to First Visible 4K Frame**: `342.2–516.4 ms`
-- **Engine Initialization (`mpv_initialize`)**: `2.79–5.18 ms`
-
-| Workload / File | Size & Bitrate | Format & Resolution | Decode Path | 1st Frame | Keyframe Scrub / Exact Seek | Effective / Source FPS | Drops (VO/Dec) | CPU % | Peak / RSS Memory |
-|-----------------|----------------|---------------------|-------------|-----------|-----------------------------|------------------------|----------------|-------|-------------------|
-| **`DJI_..._0030_D.MP4`** (Real Camera 4K60 10-bit) | `803.0 MB` (`90.8 Mbps`) | HEVC Main10 (`yuv420p10le`) `3840×2160` | **Hardware (`videotoolbox`)** | `84.09 ms` | `33.39 ms` / `50.91 ms` | **`59.94 / 59.94`** | `5 / 0` | `47.4%` | `125.9 / 120.7 MB` |
-| **`C1117.MP4`** (Real Camera 4K60 10-bit, 165s) | `1152.7 MB` (`44.2 Mbps`) | HEVC Main10 (`yuv420p10le`) `3840×2160` | **Hardware (`videotoolbox`)** | `85.02 ms` | `32.98 ms` / `116.50 ms` | **`59.94 / 59.94`** | `0 / 0` | `41.6%` | `131.8 / 131.7 MB` |
-| **`large_10gb_4k60_hevc10.mp4`** (Large ~10 GB File) | **`9898.8 MB`** (`102.7 Mbps`) | HEVC Main10 (`yuv420p10le`) `3840×2160` | **Hardware (`videotoolbox`)** | `149.95 ms` | `44.38 ms` / `87.79 ms` | **`59.92 / 59.92`** | `10 / 0` | `40.6%` | **`120.9 / 120.9 MB`** |
-| **`C2378.MP4`** (Real Camera 4K25 Rotated 270°) | `396.0 MB` (`101.4 Mbps`) | H.264 8-bit `3840×2160` → `2160×3840` | **Hardware (`videotoolbox`)** | `83.74 ms` | `146.96 ms` / `166.16 ms` | **`25.00 / 25.00`** | `0 / 0` | `15.7%` | `120.6 / 120.6 MB` |
-| **`copy_694EE865...mov`** (Real 4K 120fps VFR Portrait) | `613.3 MB` (`45.1 Mbps`) | HEVC Main `2160×3840` (120fps VFR) | **Hardware (`videotoolbox`)** | `129.38 ms` | `39.49 ms` / `71.91 ms` | **`120.0 / 120.0`** *(60Hz VSync)* | `90 / 0` *(VSync)* | `51.1%` | `94.7 / 94.6 MB` |
-| **`4k_hevc_10bit_422_30fps.mov`** (4K30 HEVC 4:2:2 `hvc1`) | `8.7 MB` (`14.0 Mbps`) | HEVC RExt (`yuv422p10le`) `3840×2160` | **VideoToolbox (`p210`)** | `86.94 ms` | `172.15 ms` / `344.58 ms` | **`30.00 / 30.00`** | `32 / 0` | `28.6%` | `104.3 / 94.0 MB` |
-| **`real_4k60_hevc_422_10bit_sw.mkv`** (4K60 HEVC 4:2:2) | `14.6 MB` (`12.3 Mbps`) | HEVC RExt (`yuv422p10le`) `3840×2160` | **VideoToolbox (`p210`)** | `471.39 ms` | `452.97 ms` / `452.97 ms` | **`59.94 / 59.94`** | `2 / 0` | `25.9%` | `92.7 / 92.4 MB` |
-| **`C3585.MP4`** (Real Sony XAVC 4K30 10-bit 4:2:2 Rotated) | **`1600.2 MB`** (`140.9 Mbps`) | H.264 High 4:2:2 (`yuv422p10`) `2160×3840` | **Software (`ff-h264`)** | `153.51 ms` | `511.94 ms` / `338.44 ms` | **`29.97 / 29.97`** | **`0 / 0`** | `306.3%` | `633.0 / 623.4 MB` |
-| **`C3585.MP4` (`--fast-preview`)** | `1600.2 MB` (`140.9 Mbps`) | H.264 High 4:2:2 (`yuv422p10`) `2160×3840` | **Software (`Fast Preview`)** | **`93.14 ms`** | **`346.80 ms` / `244.27 ms`** | **`29.97 / 29.97`** | **`0 / 0`** | `340.1%` | `664.2 / 659.2 MB` |
-| **`real_4k60_h264_422_10bit.mp4`** (4K60 CAVLC 175 Mbps, GOP=250) | `167.0 MB` (`174.9 Mbps`) | H.264 High 4:2:2 (`yuv422p10`) `3840×2160` | **Software (`ff-h264`)** | `92.03 ms` | **`92.22 ms`** / `909.24 ms` | **`59.94 / 59.94`** | **`0 / 0`** | `231.9%` | `619.9 / 619.9 MB` |
-| **`real_4k60_h264_422_10bit.mp4` (`--fast-preview`)** | `167.0 MB` (`174.9 Mbps`) | H.264 High 4:2:2 (`yuv422p10`) `3840×2160` | **Software (`Fast Preview`)** | **`49.70 ms`** | **`110.19 ms` / `110.19 ms`** | **`59.94 / 59.94`** | `7 / 0` | `289.2%` | `605.1 / 605.1 MB` |
-| **`Know My Name...webm`** (Real 4K24 AV1 Music Video, 257s) | `258.9 MB` (`6.1 Mbps`) | AV1 (`yuv420p`) `3840×2160` | **Software (`libdav1d`)** | `167.84 ms` | `89.14 ms` / `317.82 ms` | **`24.00 / 24.00`** | **`0 / 0`** | `203.2%` | `335.7 / 335.7 MB` |
-| **`4k_av1_60fps.mkv`** (4K60 AV1 47 Mbps) | `27.3 MB` (`46.9 Mbps`) | AV1 (`yuv420p`) `3840×2160` | **Software (`libdav1d`)** | `112.23 ms` | `105.83 ms` / `92.76 ms` | **`60.00 / 60.00`** | **`0 / 0`** | `187.2%` | `324.2 / 324.2 MB` |
-| **`4k_av1_60fps.mkv` (`--fast-preview`)** | `27.3 MB` (`46.9 Mbps`) | AV1 (`yuv420p`) `3840×2160` | **Software (`Fast Preview`)** | **`54.28 ms`** | `137.57 ms` / `112.91 ms` | **`60.00 / 60.00`** | **`0 / 0`** | **`176.6%`** | `324.4 / 323.6 MB` |
-| **`Vợ tôi là số 1...webm`** (30-Min Long Duration AV1, 1794s) | `290.2 MB` (`0.9 Mbps`) | AV1 (`yuv420p`) `1920×1080` | **Software (`libdav1d`)** | `69.98 ms` | `22.98 ms` / `148.51 ms` | **`25.00 / 25.00`** | **`0 / 0`** | `67.9%` | `140.2 / 140.2 MB` |
-| **`4k_prores_422hq_30fps.mov`** (4K30 ProRes 422 HQ) | `161.1 MB` (`261.2 Mbps`) | ProRes 422 HQ (`yuv422p10`) `3840×2160` | **Software (`ff-prores`)** | `34.77 ms` | `70.32 ms` / `75.50 ms` | **`30.00 / 30.00`** | **`0 / 0`** | `110.3%` | `503.9 / 497.4 MB` |
-| **`4k_prores_4444_30fps.mov`** (4K30 ProRes 4444) | `278.9 MB` (`458.5 Mbps`) | ProRes 4444 (`yuva444p12`) `3840×2160` | **Software (`ff-prores`)** | `75.16 ms` | `251.92 ms` / `389.85 ms` | **`30.00 / 30.00`** | **`0 / 0`** | `409.1%` | `928.2 / 893.8 MB` |
-| **`4k_dnxhr_hq_30fps.mov`** (4K30 Avid DNxHR HQ) | `520.9 MB` (`873.9 Mbps`) | DNxHR HQ (`yuv422p`) `3840×2160` | **Software (`ff-dnxhd`)** | `73.97 ms` | `65.75 ms` / `57.78 ms` | **`30.00 / 30.00`** | **`0 / 0`** | `101.2%` | `432.9 / 432.9 MB` |
-
-### Software-Only 4K Hardware Ceiling on Intel Core i7-9750H (2019 MBP)
-
-All **4K 24/25/30fps** software-decoded formats (Sony XAVC 4K30 H.264 10-bit 4:2:2 at 149 Mbps, 4K30 ProRes 422 HQ at 261 Mbps, 4K30 ProRes 4444 at 458 Mbps, 4K30 DNxHR HQ at 874 Mbps, and 4K24/60 AV1 via `libdav1d`) sustain **100% real-time playback with zero dropped frames** on this machine.
-
-The following extreme **software-only 4K 60fps** combinations exceed the 6-core Coffee Lake CPU ceiling (`i7-9750H @ 2.60 GHz`, lacking hardware decode silicon for H.264 10-bit 4:2:2 or ProRes):
-
-| Codec / Resolution / Framerate | Bitrate & Format | Measured Behavior on i7-9750H | Mitigation (`Fast Preview Mode` — `P` Key / `--fast-preview`) |
-|--------------------------------|------------------|-------------------------------|---------------------------------------------------------------|
-| **4K 59.94fps CABAC H.264 High 4:2:2 10-bit** (`real_4k60_h264_422_10bit_cabac.mp4`) | `160 Mbps` (`yuv422p10le`, `cabac=1`) | Sequential per-frame CABAC entropy decoding saturates threads at `648.2%` CPU (`656.8 MB` RSS), dropping `63` frames over 2.2s (~31–34 fps effective vs. 59.94 fps source). | Enabling **Fast Preview Mode** (`vd-lavc-skiploopfilter=all`, `vd-lavc-fast=yes`) skips H.264 in-loop deblocking, reducing first-frame latency (`132.6 ms` → `115.0 ms`) and improving effective frame rate and Long-GOP seek response without silently altering default fidelity. |
-| **4K 60fps Apple ProRes 4444 12-bit + Alpha** (`4k60_prores_4444.mov`) | `927.5 Mbps` (`yuva444p12le`) | Uncompressed 12-bit 4:4:4:4 slice decoding + GPU texture upload reaches `808.9%` CPU (`921.8 MB` RSS), dropping `20` frames over 2.2s (~51 fps effective vs. 60 fps source). | Full-fidelity **4K 30fps ProRes 4444** (`458.5 Mbps`) and **4K 30/60fps ProRes 422 HQ** play in real time with `0` dropped frames. |
+- **Mở video tức thì, không màn hình chờ**: Nhấp đúp vào video hoặc dùng **Open With**, cửa sổ phát lập tức hiển thị và bắt đầu phát lại.
+- **Tự động co giãn theo tỷ lệ video thực (Adaptive Aspect Ratio)**:
+  - Tự động nhận diện tỷ lệ khung hình thực tế (`9:16`, `4:5` dọc, `1:1` vuông, `16:9`, `21:9` ngang), tính toán theo SAR/DAR và metadata xoay (`90°`/`270°`).
+  - Video dọc (Shorts, Reels, TikTok) mở lên khớp khung hình chính xác, **không bị hai viền đen** (black bars).
+  - Tự động giới hạn video 4K trong phạm vi an toàn của màn hình (`NSScreen.visibleFrame`), không bao giờ bị tràn qua Menu Bar hay Dock.
+- **Vòng đời ứng dụng sạch (Clean Lifecycle)**:
+  - Khi đóng cửa sổ xem video, ứng dụng **thoát hoàn toàn**.
+  - Tuyệt đối không có daemon hay tiến trình chạy ngầm làm chậm máy.
+- **Tách biệt Tua nhanh (Shuttle) và Tốc độ phát (Speed Playback)**:
+  - **Tua nhanh (Shuttle)**: Nhấn giữ phím `←` hoặc `→` để lướt nhanh mượt mà qua các keyframe; nhả phím sẽ lập tức trả về đúng trạng thái ban đầu (đang tạm dừng tiếp tục tạm dừng, đang phát tiếp tục phát).
+  - **Tốc độ phát (Speed Playback)**: Nút bấm và phím tắt chuyển đổi tức thì giữa `1×` và `2×` (mặc định phím `2`), giữ nguyên cao độ âm thanh (pitch correction).
+- **Thanh HUD điều khiển nhỏ gọn**: Thiết kế tối ưu cho cả video dọc, thanh âm lượng tự động mở rộng/thu gọn thông minh, tích hợp menu phụ cho các tác vụ nâng cao.
+- **Lưu ảnh chụp khung hình unscaled**: Phím tắt `⌘ + ⇧ + S` chụp khung hình gốc đang phát và lưu thành tệp PNG vào `~/Pictures/UPreviewX`.
+- **Tùy chỉnh phím tắt linh hoạt**: Cửa sổ Settings native (`⌘,`) có bộ ghi phím tắt trực quan, tự phát hiện xung đột với phím tắt hệ thống macOS.
+- **Tiết kiệm pin với Dual-GPU (MacBook Pro 2019)**: Tự động điều hướng OpenGL context về GPU tích hợp **Intel UHD Graphics 630**, tránh đánh thức GPU rời AMD khi đang dùng pin.
+- **Lớp phủ chẩn đoán kỹ thuật (`D` hoặc `⌘I`)**: Hiển thị thời gian thực codec, bộ giải mã (Hardware VideoToolbox hay Software dav1d/FFmpeg), GPU đang chạy, FPS thực tế, số khung hình rớt, độ trễ và dung lượng RAM tiêu thụ.
+- **Tự chứa 100% (Zero Dependencies)**: Đóng gói sẵn 72 thư viện dylib trong `Contents/Frameworks/`. Người dùng không cần cài đặt Homebrew, FFmpeg hay gõ Terminal.
 
 ---
 
-## Keyboard Shortcuts & Everyday Preview Controls
+## 4. Bảng phím tắt & Thao tác sử dụng
 
-| Shortcut / Gesture | Action | Description |
-|--------------------|--------|-------------|
-| `Space` | Play / Pause | Replays from `00:00` if at end of file |
-| `Hold Right (→)` | **Safe Fast-Forward Shuttle** | Temporarily speeds up playback (2× / 4×) with subtle HUD badge; immediately restores original playback state on release |
-| `Hold Left (←)` | **Safe Rewind Shuttle** | Paced keyframe backward seek without decoder stall; immediately restores previous playback state on release |
-| `Tap Right (→)` | Step forward 5 seconds | Fast keyframe relative jump |
-| `Tap Left (←)` | Step backward 5 seconds | Fast keyframe relative jump |
-| `Shift + Left / Right` | Step backward / forward 1 second | Exact single-second seek |
-| `Cmd + Shift + S` | **Save Current Frame** | Captures unscaled decoded frame to `~/Pictures/UPreviewX` as PNG without OSD or window elements |
-| `Right-Click Video` | **Context Menu** | Quick access to *Save Current Frame*, Play/Pause, Rewind/Forward, Diagnostics, Fullscreen |
-| `Cmd + ,` | **Settings** | Opens native AppKit preferences window (General, Playback, Frame Capture) |
-| `Up` / `Down` | Volume ±5% | Adjusts audio playback volume |
-| `M` | Mute | Toggles audio mute |
-| `P` | Toggle Fast Preview Mode | Skips in-loop deblocking on heavy 4K software-decoded streams |
-| `F` or `Cmd + Ctrl + F` or Double-Click | Toggle Fullscreen | Native macOS smooth fullscreen transition |
-| `D` or `Cmd + I` | Toggle Decoder Diagnostics | Real-time decoder, FPS, GPU, memory and frame-drop HUD |
-| `Cmd + O` | Open video file | Native macOS file picker with video type filtering |
-| `Cmd + W` | Close window | Closes active window (exits app if last window closed, configurable in Settings) |
-
----
-
-## Reproducible Build & Test Instructions
-
-### Prerequisites
-
-- macOS 13.0+ (`x86_64` target)
-- Xcode 15+ / Swift 5.10+ Command Line Tools
-
-### Build & Clean Install Standalone App Bundle
-
-```bash
-# 1. Build dist/UPreviewX.app (auto-syncs ~/Applications/UPreviewX.app if installed)
-make app
-
-# 2. Install or update ~/Applications/UPreviewX.app and refresh LaunchServices / Icon cache
-make install
-
-# 3. Full clean rebuild & reinstall from scratch (cleans .build, dist, and old installation)
-make reinstall
-
-# 4. Run unit and engine integration tests
-make test
-```
-
-The standalone, self-contained application bundle is output to:
-
-```text
-dist/UPreviewX.app
-```
-
-### Run & Inspect Diagnostics
-
-```bash
-# Open a video file directly in UPreviewX.app with Decoder Diagnostics enabled:
-./dist/UPreviewX.app/Contents/MacOS/UPreviewX --diagnostics /path/to/video.mp4
-
-# Open with optional Fast Preview Mode enabled for heavy software-only 4K60 streams:
-./dist/UPreviewX.app/Contents/MacOS/UPreviewX --fast-preview --diagnostics /path/to/video.mp4
-
-# Run automated benchmark on a single file or directory of test media:
-./dist/UPreviewX.app/Contents/MacOS/UPreviewX --benchmark /path/to/video.mp4
-./dist/UPreviewX.app/Contents/MacOS/UPreviewX --benchmark-suite /path/to/test_media_dir
-```
+| Thao tác | Phím tắt mặc định | Mô tả |
+|---|---|---|
+| **Phát / Tạm dừng** | `Space` | Chuyển đổi phát/dừng; phát lại từ đầu nếu file đã kết thúc |
+| **Shuttle Tua tới** | `Nhấn giữ →` | Tua nhanh mượt mà; nhả phím trở về trạng thái cũ |
+| **Shuttle Tua lùi** | `Nhấn giữ ←` | Tua lùi mượt mà; nhả phím trở về trạng thái cũ |
+| **Bước tới 5 giây** | `Bấm phím →` | Nhảy nhanh 5 giây tới trước |
+| **Bước lùi 5 giây** | `Bấm phím ←` | Nhảy nhanh 5 giây về sau |
+| **Bước chính xác 1 giây**| `⇧ + ← / →` | Tua tiến/lùi đúng 1 giây |
+| **Bật/Tắt 1× / 2×** | `2` | Chuyển nhanh giữa tốc độ thường và 2× (âm thanh giữ cao độ) |
+| **Lưu khung hình hiện tại** | `⌘ + ⇧ + S` | Lưu ảnh chụp uncompressed PNG vào thư mục Ảnh |
+| **Toàn màn hình** | `F` hoặc `⌘ + ⌃ + F` | Chuyển đổi chế độ toàn màn hình native macOS |
+| **Bật/Tắt Lớp phủ chẩn đoán** | `D` hoặc `⌘ + I` | Hiển thị thông số giải mã, FPS, CPU và bộ nhớ |
+| **Chế độ xem nhanh Fast Preview** | `P` | Tăng tốc seek trên các file 4K nặng (bỏ qua in-loop filter) |
+| **Tăng / Giảm âm lượng** | `↑` / `↓` | Điều chỉnh âm lượng ±5% |
+| **Tắt tiếng (Mute)** | `M` | Tắt hoặc bật lại âm thanh |
+| **Cài đặt (Settings)** | `⌘ + ,` | Mở hộp thoại cấu hình và bộ ghi phím tắt |
+| **Mở video mới** | `⌘ + O` | Hộp thoại chọn tệp video tiêu chuẩn |
+| **Đóng cửa sổ** | `⌘ + W` | Đóng cửa sổ đang phát (tự thoát app nếu là cửa sổ cuối) |
+| **Thoát ứng dụng** | `⌘ + Q` | Thoát ứng dụng UPreviewX |
 
 ---
 
-## License & Third-Party Notices
+## 5. Yêu cầu hệ thống & Kiến trúc tương thích
 
-See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for a complete audit of bundled dynamic libraries (`libmpv`, `FFmpeg`, `libdav1d`, `libplacebo`, `lcms2`, `zimg`, `libass`), their runtime linkage (`@rpath`), and GPLv2+/GPLv3 distribution requirements.
+- **Hệ điều hành**: macOS 13.0 (Ventura) trở lên (hỗ trợ đầy đủ macOS 14 Sonoma và macOS 15 Sequoia).
+- **Kiến trúc phần cứng**:
+  - **macOS Intel (`x86_64`)**: Hỗ trợ native (tối ưu hóa phần cứng dòng MacBook Pro, iMac, Mac mini Intel).
+  - **Apple Silicon (M1/M2/M3/M4)**: Chạy ổn định thông qua môi trường chuyển đổi Rosetta 2 của macOS. Bản build native `arm64` hoàn chỉnh sẽ được cập nhật khi hoàn tất kiểm chứng trên phần cứng Apple Silicon.
+
+---
+
+## 6. Hướng dẫn gỡ cài đặt sạch (Uninstallation)
+
+Nếu bạn không còn nhu cầu sử dụng:
+1. Thoát hoàn toàn UPreviewX nếu đang mở (`⌘Q`).
+2. Kéo `/Applications/UPreviewX.app` vào Thùng rác (Trash).
+3. *(Tùy chọn)* Xóa file lưu cấu hình và phím tắt cá nhân:
+   ```bash
+   rm -f ~/Library/Preferences/com.vuphm.upreviewx.plist
+   ```
+
+---
+
+## 7. Tài liệu chuyên sâu & Hướng dẫn Nhà phát triển
+
+- [Báo cáo Đo lường Hiệu năng & Benchmarks](docs/BENCHMARKS.md): Đo lường chi tiết kích thước cửa sổ, FPS thực tế, thử nghiệm đa codec và phân tích áp lực video 4K trên CPU Intel Coffee Lake.
+- [Tài liệu Kỹ thuật & Phát triển](docs/DEVELOPMENT.md): Chi tiết kiến trúc mô-đun, cơ chế dựng hình OpenGL/CGL, điều phối đồ họa kép và hướng dẫn các lệnh `make`.
+- [Quy ước Đóng góp (Contributing Guidelines)](CONTRIBUTING.md): Hướng dẫn gửi PR, báo lỗi và tiêu chuẩn mã nguồn.
+
+---
+
+## 8. Giấy phép & Bản quyền bên thứ ba
+
+UPreviewX được phát hành theo giấy phép **GNU General Public License v2.0 or later (GPLv2+)** ([LICENSE](LICENSE)) do liên kết với bản build động GPL của `libmpv` và `FFmpeg`.
+
+Xem chi tiết danh sách bản quyền, thông báo pháp lý và liên kết mã nguồn của các thư viện tại [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

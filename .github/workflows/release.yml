@@ -1,0 +1,49 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  publish-release:
+    name: Build & Publish Release (macOS Intel x86_64)
+    runs-on: macos-13
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install dependencies (libmpv via Homebrew)
+        run: |
+          brew install mpv
+
+      - name: Compile application
+        run: make build
+
+      - name: Run verification test suite
+        run: make test
+
+      - name: Package distribution artifacts
+        run: |
+          TAG_NAME="${GITHUB_REF_NAME}"
+          VERSION="${TAG_NAME#v}"
+          VERSION="${VERSION}" make package
+
+      - name: Run release pre-flight check
+        run: make release-check
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: UPreviewX ${{ github.ref_name }}
+          body_path: RELEASE_NOTES_v0.3.0-beta.md
+          files: |
+            dist/*.dmg
+            dist/*.zip
+            dist/SHA256SUMS
+          prerelease: ${{ contains(github.ref_name, 'beta') || contains(github.ref_name, 'alpha') || contains(github.ref_name, 'rc') }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

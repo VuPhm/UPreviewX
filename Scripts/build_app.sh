@@ -3,11 +3,13 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CONFIG="${1:-release}"
-ARCH="x86_64"
+ARCH="${ARCH:-x86_64}"
+VERSION="${VERSION:-0.3.0}"
+BUILD_NUM="${BUILD_NUM:-3}"
 
 "${ROOT_DIR}/Scripts/prepare_libs.sh"
 
-echo "Building UPreviewX (${CONFIG}, ${ARCH})..."
+echo "==> Building UPreviewX (${CONFIG}, ${ARCH})..."
 swift build -c "${CONFIG}" --arch "${ARCH}"
 
 BIN_PATH="$(swift build -c "${CONFIG}" --arch "${ARCH}" --show-bin-path)/UPreviewX"
@@ -21,12 +23,13 @@ rm -rf "${APP_DIR}"
 mkdir -p "${MACOS_DIR}" "${FRAMEWORKS_DIR}" "${RESOURCES_DIR}"
 
 cp "${BIN_PATH}" "${MACOS_DIR}/UPreviewX"
+chmod 755 "${MACOS_DIR}/UPreviewX"
 cp "${ROOT_DIR}/Resources/Info.plist" "${CONTENTS_DIR}/Info.plist"
 
 ICON_PNG="${ROOT_DIR}/Resources/AppIcon.png"
 ICON_ICNS="${ROOT_DIR}/Resources/AppIcon.icns"
 if [ -f "${ICON_PNG}" ] && { [ ! -f "${ICON_ICNS}" ] || [ "${ICON_PNG}" -nt "${ICON_ICNS}" ]; }; then
-    echo "Regenerating AppIcon.icns from AppIcon.png..."
+    echo "==> Regenerating AppIcon.icns from AppIcon.png..."
     ICONSET_TMP="$(mktemp -d)/AppIcon.iconset"
     mkdir -p "${ICONSET_TMP}"
     for sz in 16 32 128 256 512; do
@@ -42,25 +45,35 @@ if [ -f "${ICON_ICNS}" ]; then
     cp "${ICON_ICNS}" "${RESOURCES_DIR}/AppIcon.icns"
 fi
 
-# Stamp monotonic build version so macOS LaunchServices & IconServices always invalidate stale cache
-BUILD_VER="$(date +%Y%m%d.%H%M%S)"
-/usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${BUILD_VER}" "${CONTENTS_DIR}/Info.plist"
+# Set version metadata
+/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${VERSION}" "${CONTENTS_DIR}/Info.plist" 2>/dev/null || \
+/usr/libexec/PlistBuddy -c "Add :CFBundleShortVersionString string ${VERSION}" "${CONTENTS_DIR}/Info.plist"
 
-# Remove build-dir rpath from packaged binary so it strictly uses @executable_path/../Frameworks
+/usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${BUILD_NUM}" "${CONTENTS_DIR}/Info.plist" 2>/dev/null || \
+/usr/libexec/PlistBuddy -c "Add :CFBundleVersion string ${BUILD_NUM}" "${CONTENTS_DIR}/Info.plist"
+
+# Remove local developer build rpath from packaged binary so it strictly uses @executable_path/../Frameworks
 install_name_tool -delete_rpath "${ROOT_DIR}/Vendor/lib" "${MACOS_DIR}/UPreviewX" 2>/dev/null || true
 
-echo "Bundling runtime libraries into ${FRAMEWORKS_DIR}..."
+echo "==> Bundling runtime libraries into ${FRAMEWORKS_DIR}..."
 for dylib in "${ROOT_DIR}/Vendor/lib"/*.dylib; do
     if [ ! -L "${dylib}" ]; then
         cp -f "${dylib}" "${FRAMEWORKS_DIR}/"
+        chmod 755 "${FRAMEWORKS_DIR}/$(basename "${dylib}")"
     fi
 done
 
-echo "Signing UPreviewX.app bundle..."
+# Ensure libmpv.dylib symlink exists inside Frameworks if needed
+if [ -f "${FRAMEWORKS_DIR}/libmpv.2.dylib" ] && [ ! -e "${FRAMEWORKS_DIR}/libmpv.dylib" ]; then
+    (cd "${FRAMEWORKS_DIR}" && ln -sf libmpv.2.dylib libmpv.dylib)
+fi
+
+echo "==> Signing UPreviewX.app bundle (ad-hoc)..."
 for dylib in "${FRAMEWORKS_DIR}"/*.dylib; do
-    codesign --force --sign - --timestamp=none "${dylib}"
+    if [ ! -L "${dylib}" ]; then
+        codesign --force --sign - --timestamp=none "${dylib}"
+    fi
 done
 codesign --force --deep --sign - --timestamp=none "${APP_DIR}"
 
-echo "Built standalone app bundle at: ${APP_DIR}"
-
+echo "==> Successfully built standalone app bundle at: ${APP_DIR}"
