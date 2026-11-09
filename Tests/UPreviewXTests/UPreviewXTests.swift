@@ -476,6 +476,8 @@ final class UPreviewXTests: XCTestCase {
             return
         }
 
+        RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.05))
+
         // 1. Verify 2x Speed Mode is selectable and separate from shuttle
         XCTAssertEqual(controller.engine.speed, 1.0)
         controller.toggleSpeed()
