@@ -95,3 +95,4 @@ echo "   DMG:      ${DMG_FILE}"
 echo "   ZIP:      ${ZIP_FILE}"
 echo "   Checksum: ${CHECKSUM_FILE}"
 echo "========================================================"
+

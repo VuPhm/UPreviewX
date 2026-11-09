@@ -2,30 +2,34 @@ name: CI
 
 on:
   push:
-    branches: [ main, "feature/**" ]
+    branches: [ main, "feature/*", "release/*" ]
   pull_request:
     branches: [ main ]
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build-and-test:
-    name: Build, Test & Release-Check (macOS x86_64)
+    name: Build & Test (macOS Intel x86_64)
     runs-on: macos-13
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Prepare x86_64 runtime libraries
+      - name: Install dependencies (libmpv via Homebrew)
         run: |
-          ./Scripts/prepare_libs.sh
+          brew install mpv
 
-      - name: Run Unit Tests
-        run: |
-          swift test --arch x86_64
+      - name: Compile application
+        run: make build
 
-      - name: Build Distribution Packages
-        run: |
-          ./Scripts/package_distribution.sh
+      - name: Run verification test suite
+        run: make test
 
-      - name: Run Release Verification Gate
-        run: |
-          ./Scripts/release_check.sh
+      - name: Package distribution artifacts
+        run: make package
+
+      - name: Run release pre-flight check
+        run: make release-check

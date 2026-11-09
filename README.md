@@ -1,207 +1,144 @@
-# UPreviewX
+# UPreviewX — Ứng dụng xem nhanh video native siêu nhẹ cho macOS
 
 <p align="center">
-  <img src="Resources/AppIcon.png" width="128" height="128" alt="UPreviewX App Icon" />
+  <img src="Resources/AppIcon.png" width="128" height="128" alt="UPreviewX Icon" />
 </p>
 
-<p align="center">
-  <b>Lightweight, native macOS video preview utility</b><br/>
-  <i>Ứng dụng xem nhanh video native siêu nhẹ dành cho macOS</i>
-</p>
+[![Release](https://img.shields.io/badge/release-v0.3.0--beta-blue.svg)](https://github.com/VuPhm/UPreviewX/releases)
+[![Platform](https://img.shields.io/badge/platform-macOS%2013.0%2B-brightgreen.svg)]()
+[![Architecture](https://img.shields.io/badge/arch-Intel%20x86__64-orange.svg)]()
+[![License](https://img.shields.io/badge/license-GPLv2%2B-lightgrey.svg)](LICENSE)
 
-<p align="center">
-  <a href="#english">English</a> • <a href="#tiếng-việt">Tiếng Việt</a> • <a href="#download--installation">Download & Install</a> • <a href="#gatekeeper-guide">Gatekeeper Guide</a> • <a href="#shortcuts">Shortcuts</a>
-</p>
+**UPreviewX** là tiện ích xem trước video native nhẹ, hiệu năng cao dành cho macOS (`Swift` + `AppKit`, `x86_64`), tối ưu hóa đặc biệt cho dòng **Intel MacBook Pro 16-inch (2019)**.
 
----
-
-<a name="english"></a>
-## English Overview
-
-**UPreviewX** is a lightweight, native macOS video preview utility (`Swift` + `AppKit`, `x86_64`) optimized for the **Intel MacBook Pro 16-inch (2019)** (Intel Core i7-9750H, 16 GB RAM, Intel UHD Graphics 630 + AMD Radeon Pro 5300M).
-
-It delivers a fast, minimal, single-window preview experience similar to QuickTime / QuickLook while leveraging **libmpv + FFmpeg + VideoToolbox + dav1d** for comprehensive codec and container compatibility.
-
-### Key Features & UX
-- **Direct Video Window (No Home Screen)**: Double-clicking a supported video in Finder or using **Open With → UPreviewX** opens the video window immediately and begins playback.
-- **Adaptive Aspect-Ratio Window Sizing**:
-  - Automatically sizes and centers the player window to fit the **actual display aspect ratio** of the video (`9:16` and `4:5` portrait, `1:1` square, `16:9` and `21:9` landscape) without opening vertical videos inside a 16:9 box with side black bars.
-  - Accounts for container display rotation metadata (`90°` / `270°`), sample aspect ratio (`SAR`), and display aspect ratio (`DAR`).
-  - Constrains oversized windows (e.g. 4K) to `NSScreen.visibleFrame` (respecting menu bar and Dock) and locks window aspect ratio during resize.
-- **Clean Process Lifecycle**: Closing the video window terminates the application completely (`applicationShouldTerminateAfterLastWindowClosed = true`). No background daemons or lingering processes.
-- **Transport UX: Separation of Fast Seeking from Speed Playback**:
-  - **Fast Seeking / Shuttle**: Rapid timeline navigation using efficient keyframe seeking. Press-and-hold navigation keys (default: `←` / `→`) triggers smooth shuttle seeking without decoder queue accumulation or decoder stalls. Releasing the key restores the exact prior state (paused remains paused, playing resumes playing).
-  - **Speed Playback**: Continuous video playback at different speeds with pitch-corrected audio synchronization. Features a dedicated **1× / 2× speed toggle** in both the HUD and keyboard shortcuts (default: `2`).
-- **Compact Playback HUD**: Streamlined floating controls optimized for portrait windows with an expandable volume slider and secondary action menu.
-- **Customizable Keyboard Shortcuts**: Native AppKit Settings tab (`⌘,`) with interactive recorder and conflict detection against macOS system keys.
-- **Dual-GPU Power Awareness (MBP 2019)**: Selects the integrated **Intel UHD Graphics 630** virtual screen via `cmpv_prefer_integrated_gpu` to avoid waking the power-hungry discrete GPU when viewing videos on battery.
-- **Developer Decoder Diagnostics (`D` or `⌘I`)**: Real-time overlay reporting codec, decode path (`Hardware videotoolbox` vs. `Software FFmpeg/dav1d`), active GPU renderer, resolution, rotation, bitrate, nominal/effective FPS, dropped frames, A/V sync, latency, CPU %, and RSS memory.
-- **100% Self-Contained Distribution Bundle**: 72 dynamic libraries (`libmpv.2.dylib`, `FFmpeg` decoders, `dav1d`, `libplacebo`, `libass`) are signed and bundled in `Contents/Frameworks/` via `@rpath`. End users do **not** need Homebrew, FFmpeg, or command-line tools.
+Ứng dụng mang lại trải nghiệm xem nhanh tức thì như QuickTime / QuickLook nhưng sở hữu sức mạnh giải mã toàn diện từ **libmpv + FFmpeg + VideoToolbox + dav1d**, tự động thích ứng với mọi tỷ lệ khung hình video mà không có bất kỳ tiến trình chạy ngầm nào.
 
 ---
 
-<a name="tiếng-việt"></a>
-## Tiếng Việt (Tổng quan)
+## 1. Tải về & Cài đặt nhanh
 
-**UPreviewX** là tiện ích xem trước video native nhẹ dành cho macOS (`Swift` + `AppKit`, `x86_64`), tối ưu hóa trên **MacBook Pro 16-inch 2019** (Intel Core i7-9750H, Intel UHD Graphics 630 + AMD Radeon Pro 5300M).
+Các tệp cài đặt chính thức được phát hành tại trang [GitHub Releases](https://github.com/VuPhm/UPreviewX/releases):
 
-Ứng dụng mang đến trải nghiệm mở video nhanh tức thì như QuickTime / QuickLook, đồng thời tích hợp nền tảng giải mã mạnh mẽ **libmpv + FFmpeg + VideoToolbox + dav1d** hỗ trợ gần như mọi định dạng video hiện đại.
+| Tệp phân phối | Định dạng | Mô tả |
+|---|---|---|
+| **[`UPreviewX-v0.3.0-macos-x86_64.dmg`](https://github.com/VuPhm/UPreviewX/releases/download/v0.3.0-beta/UPreviewX-v0.3.0-macos-x86_64.dmg)** | **Apple Disk Image** | **Khuyên dùng:** Kéo-thả vào Applications, sẵn sàng sử dụng. |
+| **`UPreviewX-v0.3.0-macos-x86_64.zip`** | Portable ZIP | Bản chạy trực tiếp không cần mount đĩa. |
+| **`SHA256SUMS`** | Checksum Text | Mã băm kiểm tra tính toàn vẹn của tệp cài đặt. |
 
-### Điểm nổi bật
-- **Mở trực tiếp cửa sổ phát video**: Mở ngay lập tức khi nhấp đúp file trong Finder hoặc dùng menu **Open With → UPreviewX**, không có màn hình chờ hay cửa sổ đệm.
-- **Tự động co giãn theo tỷ lệ video thực tế (Adaptive Aspect-Ratio)**:
-  - Tự động căn chỉnh kích thước cửa sổ khớp tỷ lệ khung hình thực (`9:16`, `4:5` dọc, `1:1` vuông, `16:9`, `21:9` ngang), không bị viền đen hai bên khi xem video dọc.
-  - Tự động nhận diện metadata xoay video (`90°` / `270°`) từ camera điện thoại.
-  - Giới hạn kích thước video 4K trong phạm vi hiển thị an toàn (`NSScreen.visibleFrame`), không tràn qua Menu Bar hoặc Dock.
-- **Vòng đời ứng dụng sạch (Clean Lifecycle)**: Đóng cửa sổ video sẽ thoát ứng dụng hoàn toàn. Không có daemon hay tiến trình chạy ngầm chiếm tài nguyên.
-- **Tách bạch Shuttle Tua nhanh và Tốc độ phát (Speed Playback)**:
-  - Tua nhanh (Shuttle): Nhấn giữ `←` hoặc `→` để tua nhanh mượt mà qua keyframe; nhả phím sẽ lập tức trả về trạng thái trước đó (đang tạm dừng tiếp tục tạm dừng, đang phát tiếp tục phát).
-  - Tốc độ phát: Nút bấm và phím tắt chuyển đổi tức thì giữa `1×` và `2×` (mặc định phím `2`), giữ nguyên cao độ âm thanh (pitch correction).
-- **HUD điều khiển gọn gàng**: Thiết kế phù hợp cho cả video dọc, thanh âm lượng tự thu gọn, menu mở rộng cho các tính năng phụ.
-- **Tùy chỉnh phím tắt linh hoạt**: Tab Settings native (`⌘,`) cho phép ghi phím tắt mới, tự động phát hiện và ngăn trùng lặp với phím tắt hệ thống macOS.
-- **Tiết kiệm pin với Dual-GPU (Intel MBP 2019)**: Tự động điều hướng OpenGL context về GPU tích hợp **Intel UHD Graphics 630**, hạn chế tối đa kích hoạt GPU rời AMD gây hao pin.
-- **Lớp phủ chẩn đoán thời gian thực (`D` hoặc `⌘I`)**: Hiển thị chi tiết bộ giải mã (Hardware VideoToolbox hay Software dav1d/FFmpeg), GPU đang chạy, FPS thực tế, số khung hình rớt, độ trễ và % CPU / RAM.
-- **Đóng gói hoàn chỉnh, độc lập**: Tích hợp sẵn 72 thư viện dylib trong `Contents/Frameworks/`. Người dùng cuối **không** cần cài Homebrew hay Terminal.
+### Các bước cài đặt:
+1. Tải tệp **`UPreviewX-v0.3.0-macos-x86_64.dmg`**.
+2. Nhấp đúp mở file `.dmg`, kéo biểu tượng **`UPreviewX`** vào thư mục **`Applications`**.
+3. Mở `Applications` và khởi chạy `UPreviewX` lần đầu tiên.
 
 ---
 
-<a name="download--installation"></a>
-## Download & Installation / Tải về & Cài đặt
+## 2. Hướng dẫn cấp quyền mở lần đầu (Gatekeeper Trust UX)
 
-### Distribution Formats (Phát hành)
-Each release provides two distribution artifacts in the [Releases](https://github.com/VuPhm/UPreviewX/releases) page:
-1. **DMG Installer** (`UPreviewX-v*-macos-x86_64.dmg`): Drag-and-drop installer into `/Applications`.
-2. **Portable ZIP** (`UPreviewX-v*-macos-x86_64.zip`): Standalone archive ready to run anywhere.
+UPreviewX là phần mềm mã nguồn mở độc lập và được ký số ad-hoc hợp lệ (`codesign --sign -`). Khi mở ứng dụng lần đầu trên macOS 13+, Gatekeeper có thể hiển thị cảnh báo từ chối do chưa đăng ký tài khoản trả phí Apple Developer ID:
 
-### System Requirements (Yêu cầu hệ thống)
-- **macOS**: 13.0 (Ventura) or later (Sonoma, Sequoia supported).
-- **Hardware Architecture**:
-  - **macOS Intel (x86_64)**: Native baseline (Intel Core i5/i7/i9 Macs).
-  - **Apple Silicon (M1/M2/M3/M4)**: Runs seamlessly via Apple's built-in Rosetta 2 translation environment. Native arm64 builds will be provided in a future release once full native dependencies are audited.
+```text
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                       QUY TRÌNH MỞ ỨNG DỤNG LẦN ĐẦU                         │
+│            (Chuẩn của Apple trên macOS 13 Ventura, 14 Sonoma, 15+)          │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  Cách 1 — Mở nhanh qua Finder (Khuyên dùng):                                │
+│    1. Mở Finder, truy cập thư mục Applications.                             │
+│    2. Nhấp chuột phải (hoặc giữ phím Control và bấm chuột) vào UPreviewX.   │
+│    3. Chọn "Open" (Mở) từ menu ngữ cảnh.                                    │
+│    4. Trong hộp thoại bảo mật xuất hiện, bấm nút [Open] (Mở).                │
+│                                                                             │
+│  Cách 2 — Xác nhận qua Cài đặt hệ thống (System Settings):                 │
+│    1. Mở System Settings (Cài đặt hệ thống) → Privacy & Security.           │
+│    2. Cuộn xuống mục Security (Bảo mật).                                    │
+│    3. Tại dòng thông báo chặn UPreviewX, bấm nút [Open Anyway] (Vẫn mở).    │
+│    4. Nhập mật khẩu máy Mac hoặc Touch ID để hoàn tất.                      │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
 
-### Installation Steps (Cài đặt)
-1. Download `UPreviewX-v0.3.0-macos-x86_64.dmg` from the Releases section.
-2. Double-click the DMG to open it.
-3. Drag the `UPreviewX` icon into the `Applications` folder shortcut.
-4. Eject the DMG.
-
----
-
-<a name="gatekeeper-guide"></a>
-## Gatekeeper First-Launch Guide / Hướng dẫn Gatekeeper
-
-UPreviewX is open-source software distributed with valid ad-hoc code signing (`codesign --sign -`) without an Apple Developer ID subscription.
-
-When opening UPreviewX for the first time, macOS Gatekeeper may show a warning:
-> *"UPreviewX cannot be opened because Apple cannot check it for malicious software."*
-> *(UPreviewX không thể mở vì Apple không thể kiểm tra phần mềm độc hại).*
-
-### Official Apple Standard Procedure (Hướng dẫn chuẩn theo Apple):
-1. Open **Finder** and go to **Applications**.
-2. **Right-click** (or hold **Control** and click) `UPreviewX.app`.
-3. Choose **Open** from the shortcut menu.
-4. In the dialog that appears, click **Open**.
-
-*Alternative method via System Settings:*
-1. Open **System Settings** (Cài đặt hệ thống) → **Privacy & Security** (Quyền riêng tư & Bảo mật).
-2. Scroll down to the **Security** (Bảo mật) section.
-3. Under the message *"UPreviewX was blocked from use because it is not from an identified developer"*, click **Open Anyway** (Vẫn mở).
-
-> [!NOTE]
-> You only need to perform this confirmation once on first launch. macOS will remember your decision, and UPreviewX will open normally via double-click or **Open With** from then on.
+> [!TIP]
+> Bạn chỉ cần thực hiện thao tác này **duy nhất một lần**. macOS sẽ lưu ghi nhận và các lần sau bạn có thể mở video bằng cách nhấp đúp hoặc qua menu chuột phải **Open With → UPreviewX** bình thường.
 
 ---
 
-## Uninstallation / Gỡ cài đặt
+## 3. Điểm nổi bật & Tính năng chính
 
-To completely remove UPreviewX from your Mac:
-1. Quit UPreviewX if running (`⌘Q`).
-2. Move `/Applications/UPreviewX.app` (or `~/Applications/UPreviewX.app`) to the Trash.
-3. *(Optional)* Remove user preferences and saved shortcuts:
+- **Mở video tức thì, không màn hình chờ**: Nhấp đúp vào video hoặc dùng **Open With**, cửa sổ phát lập tức hiển thị và bắt đầu phát lại.
+- **Tự động co giãn theo tỷ lệ video thực (Adaptive Aspect Ratio)**:
+  - Tự động nhận diện tỷ lệ khung hình thực tế (`9:16`, `4:5` dọc, `1:1` vuông, `16:9`, `21:9` ngang), tính toán theo SAR/DAR và metadata xoay (`90°`/`270°`).
+  - Video dọc (Shorts, Reels, TikTok) mở lên khớp khung hình chính xác, **không bị hai viền đen** (black bars).
+  - Tự động giới hạn video 4K trong phạm vi an toàn của màn hình (`NSScreen.visibleFrame`), không bao giờ bị tràn qua Menu Bar hay Dock.
+- **Vòng đời ứng dụng sạch (Clean Lifecycle)**:
+  - Khi đóng cửa sổ xem video, ứng dụng **thoát hoàn toàn**.
+  - Tuyệt đối không có daemon hay tiến trình chạy ngầm làm chậm máy.
+- **Tách biệt Tua nhanh (Shuttle) và Tốc độ phát (Speed Playback)**:
+  - **Tua nhanh (Shuttle)**: Nhấn giữ phím `←` hoặc `→` để lướt nhanh mượt mà qua các keyframe; nhả phím sẽ lập tức trả về đúng trạng thái ban đầu (đang tạm dừng tiếp tục tạm dừng, đang phát tiếp tục phát).
+  - **Tốc độ phát (Speed Playback)**: Nút bấm và phím tắt chuyển đổi tức thì giữa `1×` và `2×` (mặc định phím `2`), giữ nguyên cao độ âm thanh (pitch correction).
+- **Thanh HUD điều khiển nhỏ gọn**: Thiết kế tối ưu cho cả video dọc, thanh âm lượng tự động mở rộng/thu gọn thông minh, tích hợp menu phụ cho các tác vụ nâng cao.
+- **Lưu ảnh chụp khung hình unscaled**: Phím tắt `⌘ + ⇧ + S` chụp khung hình gốc đang phát và lưu thành tệp PNG vào `~/Pictures/UPreviewX`.
+- **Tùy chỉnh phím tắt linh hoạt**: Cửa sổ Settings native (`⌘,`) có bộ ghi phím tắt trực quan, tự phát hiện xung đột với phím tắt hệ thống macOS.
+- **Tiết kiệm pin với Dual-GPU (MacBook Pro 2019)**: Tự động điều hướng OpenGL context về GPU tích hợp **Intel UHD Graphics 630**, tránh đánh thức GPU rời AMD khi đang dùng pin.
+- **Lớp phủ chẩn đoán kỹ thuật (`D` hoặc `⌘I`)**: Hiển thị thời gian thực codec, bộ giải mã (Hardware VideoToolbox hay Software dav1d/FFmpeg), GPU đang chạy, FPS thực tế, số khung hình rớt, độ trễ và dung lượng RAM tiêu thụ.
+- **Tự chứa 100% (Zero Dependencies)**: Đóng gói sẵn 72 thư viện dylib trong `Contents/Frameworks/`. Người dùng không cần cài đặt Homebrew, FFmpeg hay gõ Terminal.
+
+---
+
+## 4. Bảng phím tắt & Thao tác sử dụng
+
+| Thao tác | Phím tắt mặc định | Mô tả |
+|---|---|---|
+| **Phát / Tạm dừng** | `Space` | Chuyển đổi phát/dừng; phát lại từ đầu nếu file đã kết thúc |
+| **Shuttle Tua tới** | `Nhấn giữ →` | Tua nhanh mượt mà; nhả phím trở về trạng thái cũ |
+| **Shuttle Tua lùi** | `Nhấn giữ ←` | Tua lùi mượt mà; nhả phím trở về trạng thái cũ |
+| **Bước tới 5 giây** | `Bấm phím →` | Nhảy nhanh 5 giây tới trước |
+| **Bước lùi 5 giây** | `Bấm phím ←` | Nhảy nhanh 5 giây về sau |
+| **Bước chính xác 1 giây**| `⇧ + ← / →` | Tua tiến/lùi đúng 1 giây |
+| **Bật/Tắt 1× / 2×** | `2` | Chuyển nhanh giữa tốc độ thường và 2× (âm thanh giữ cao độ) |
+| **Lưu khung hình hiện tại** | `⌘ + ⇧ + S` | Lưu ảnh chụp uncompressed PNG vào thư mục Ảnh |
+| **Toàn màn hình** | `F` hoặc `⌘ + ⌃ + F` | Chuyển đổi chế độ toàn màn hình native macOS |
+| **Bật/Tắt Lớp phủ chẩn đoán** | `D` hoặc `⌘ + I` | Hiển thị thông số giải mã, FPS, CPU và bộ nhớ |
+| **Chế độ xem nhanh Fast Preview** | `P` | Tăng tốc seek trên các file 4K nặng (bỏ qua in-loop filter) |
+| **Tăng / Giảm âm lượng** | `↑` / `↓` | Điều chỉnh âm lượng ±5% |
+| **Tắt tiếng (Mute)** | `M` | Tắt hoặc bật lại âm thanh |
+| **Cài đặt (Settings)** | `⌘ + ,` | Mở hộp thoại cấu hình và bộ ghi phím tắt |
+| **Mở video mới** | `⌘ + O` | Hộp thoại chọn tệp video tiêu chuẩn |
+| **Đóng cửa sổ** | `⌘ + W` | Đóng cửa sổ đang phát (tự thoát app nếu là cửa sổ cuối) |
+| **Thoát ứng dụng** | `⌘ + Q` | Thoát ứng dụng UPreviewX |
+
+---
+
+## 5. Yêu cầu hệ thống & Kiến trúc tương thích
+
+- **Hệ điều hành**: macOS 13.0 (Ventura) trở lên (hỗ trợ đầy đủ macOS 14 Sonoma và macOS 15 Sequoia).
+- **Kiến trúc phần cứng**:
+  - **macOS Intel (`x86_64`)**: Hỗ trợ native (tối ưu hóa phần cứng dòng MacBook Pro, iMac, Mac mini Intel).
+  - **Apple Silicon (M1/M2/M3/M4)**: Chạy ổn định thông qua môi trường chuyển đổi Rosetta 2 của macOS. Bản build native `arm64` hoàn chỉnh sẽ được cập nhật khi hoàn tất kiểm chứng trên phần cứng Apple Silicon.
+
+---
+
+## 6. Hướng dẫn gỡ cài đặt sạch (Uninstallation)
+
+Nếu bạn không còn nhu cầu sử dụng:
+1. Thoát hoàn toàn UPreviewX nếu đang mở (`⌘Q`).
+2. Kéo `/Applications/UPreviewX.app` vào Thùng rác (Trash).
+3. *(Tùy chọn)* Xóa file lưu cấu hình và phím tắt cá nhân:
    ```bash
-   defaults delete com.vuphm.upreviewx
    rm -f ~/Library/Preferences/com.vuphm.upreviewx.plist
    ```
 
 ---
 
-<a name="shortcuts"></a>
-## Keyboard Shortcuts / Bảng phím tắt
+## 7. Tài liệu chuyên sâu & Hướng dẫn Nhà phát triển
 
-| Action / Thao tác | Default Shortcut | Description / Mô tả |
-|-------------------|------------------|---------------------|
-| **Play / Pause** | `Space` | Toggles playback; replays from beginning if ended |
-| **Shuttle Tua tới** | `Hold →` | Fast-forward shuttle; restores previous state on key release |
-| **Shuttle Tua lùi** | `Hold ←` | Rewind shuttle; restores previous state on key release |
-| **Tua tới 5 giây** | `Tap →` | Relative jump forward 5s |
-| **Tua lùi 5 giây** | `Tap ←` | Relative jump backward 5s |
-| **Tua bước 1 giây** | `Shift + ← / →` | Exact 1-second step |
-| **Toggle 1× / 2×** | `2` | Instant speed switch with pitch-corrected audio |
-| **Save Current Frame** | `⌘ + ⇧ + S` | Captures uncompressed PNG to `~/Pictures/UPreviewX` |
-| **Toggle Fullscreen** | `F` or `⌘ + ⌃ + F` | Native macOS fullscreen transition |
-| **Decoder Diagnostics** | `D` or `⌘ + I` | Real-time decoder, FPS, GPU, and memory HUD overlay |
-| **Fast Preview Mode** | `P` | Skips in-loop deblocking on heavy software-decoded 4K streams |
-| **Volume Up / Down** | `↑` / `↓` | Adjusts volume by ±5% |
-| **Mute** | `M` | Mutes or unmutes audio |
-| **Settings** | `⌘ + ,` | Native preferences & interactive shortcut recorder |
-| **Open Video File** | `⌘ + O` | System file picker filtered by video media types |
-| **Close Window** | `⌘ + W` | Closes active window (terminates app if last window closed) |
-| **Quit App** | `⌘ + Q` | Exits UPreviewX cleanly |
+- [Báo cáo Đo lường Hiệu năng & Benchmarks](docs/BENCHMARKS.md): Đo lường chi tiết kích thước cửa sổ, FPS thực tế, thử nghiệm đa codec và phân tích áp lực video 4K trên CPU Intel Coffee Lake.
+- [Tài liệu Kỹ thuật & Phát triển](docs/DEVELOPMENT.md): Chi tiết kiến trúc mô-đun, cơ chế dựng hình OpenGL/CGL, điều phối đồ họa kép và hướng dẫn các lệnh `make`.
+- [Quy ước Đóng góp (Contributing Guidelines)](CONTRIBUTING.md): Hướng dẫn gửi PR, báo lỗi và tiêu chuẩn mã nguồn.
 
 ---
 
-## Developer Guide & Building from Source
+## 8. Giấy phép & Bản quyền bên thứ ba
 
-### Prerequisites
-- macOS 13.0+
-- Xcode 15+ / Swift 5.10+ Command Line Tools
-- `lipo`, `install_name_tool`, `codesign`, `hdiutil` (included with macOS / Xcode)
+UPreviewX được phát hành theo giấy phép **GNU General Public License v2.0 or later (GPLv2+)** ([LICENSE](LICENSE)) do liên kết với bản build động GPL của `libmpv` và `FFmpeg`.
 
-### Make Targets
-```bash
-# 1. Compile binary for x86_64
-make build
-
-# 2. Run test suite
-make test
-
-# 3. Build standalone app bundle into dist/UPreviewX.app
-make app
-
-# 4. Package distribution DMG, ZIP, and SHA256SUMS
-make package
-
-# 5. Run full release verification gate
-make release-check
-
-# 6. Run automated playback & benchmark validation across diverse codecs
-make validate
-
-# 7. Install to ~/Applications for local development
-make install
-
-# 8. Uninstall from ~/Applications
-make uninstall
-```
-
----
-
-## Verification & Checksums
-
-You can verify the cryptographic integrity of any downloaded release package using standard macOS command line tools:
-
-```bash
-# Check SHA256 hashes
-shasum -a 256 -c SHA256SUMS
-
-# Verify code signature
-codesign --verify --deep --strict /path/to/UPreviewX.app
-```
-
----
-
-## License & Third-Party Notices
-
-UPreviewX is licensed under the **GNU General Public License v2.0 or later (GPLv2+)** due to bundling GPL-configured dynamic builds of `libmpv` and `FFmpeg`.
-
-See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for the complete list of bundled dynamic libraries, their respective open-source licenses, and upstream source code links.
+Xem chi tiết danh sách bản quyền, thông báo pháp lý và liên kết mã nguồn của các thư viện tại [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
