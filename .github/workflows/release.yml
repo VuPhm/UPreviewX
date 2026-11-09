@@ -1,0 +1,46 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build-and-release:
+    name: Build & Publish Release Artifacts (macOS x86_64)
+    runs-on: macos-13
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Prepare x86_64 runtime libraries
+        run: |
+          ./Scripts/prepare_libs.sh
+
+      - name: Run Unit Tests
+        run: |
+          swift test --arch x86_64
+
+      - name: Build Distribution Packages
+        run: |
+          TAG_NAME="${GITHUB_REF_NAME}"
+          VERSION="${TAG_NAME#v}"
+          VERSION="${VERSION}" ./Scripts/package_distribution.sh
+
+      - name: Run Release Verification Gate
+        run: |
+          ./Scripts/release_check.sh
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: UPreviewX ${{ github.ref_name }}
+          prerelease: ${{ contains(github.ref_name, 'beta') || contains(github.ref_name, 'alpha') || contains(github.ref_name, 'rc') }}
+          draft: false
+          files: |
+            dist/*.dmg
+            dist/*.zip
+            dist/SHA256SUMS
+          body_path: RELEASE_NOTES_v0.3.0-beta.md
