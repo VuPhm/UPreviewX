@@ -19,7 +19,20 @@ It delivers a fast, minimal, single-window preview experience similar to QuickTi
   - Constrains oversized windows (e.g., 4K `3840×2160` or `2160×3840`) to `NSScreen.visibleFrame` (respecting the macOS menu bar and Dock) and locks `NSWindow.aspectRatio` so manual resizing preserves video proportions.
   - Reveals the window only once video display geometry is resolved (or after a short 180 ms fallback) so portrait/square videos never flash inside a default 16:9 frame.
 - **Quit-on-Last-Window-Close Lifecycle**: Closing the video window terminates the application completely (`applicationShouldTerminateAfterLastWindowClosed = true`). It never remains resident in the background.
-- **Unobtrusive Auto-Hiding HUD**: Compact, flexible floating controls (Play/Pause, interactive timeline scrubber, elapsed/duration time, Mute, Volume, Diagnostics toggle, Fullscreen toggle) automatically adapt to narrow portrait windows (`minSize = 210×210`) and fade out after 2 seconds of cursor inactivity.
+- **Transport UX: Separation of Fast Seeking from Speed Playback**:
+  - **Fast Seeking / Shuttle**: Rapid timeline navigation using efficient keyframe seeking. Press-and-hold navigation keys (default: `←` / `→`) triggers smooth shuttle seeking without decoder queue accumulation or decoder stalls. Releasing the key restores the exact prior state (paused remains paused, playing resumes playing). Automatically adjusts seek frequency for heavy software-decoded codecs. Short press continues to perform precise short-step seeking.
+  - **Speed Playback**: Continuous video playback at different speeds with pitch-corrected audio synchronization. Features a dedicated **1× / 2× speed toggle** in both the HUD and keyboard shortcuts (default: `2`), clearly distinguished from timeline shuttling.
+- **Compact Playback HUD**:
+  - Streamlined floating controls optimized for portrait (`9:16`) windows without clipping or forcing wide bars.
+  - **Expandable Volume**: Compact speaker icon by default reserving zero horizontal space; hovering or clicking expands the volume slider, smoothly auto-collapsing after mouse exit with a 350 ms flicker-prevention delay while preserving quick mute/unmute.
+  - **Essential Primary Controls**: Play/Pause, timeline scrubber, compact rewind/forward, expandable volume, 1×/2× speed toggle, and fullscreen.
+  - **Secondary Actions Overflow Menu**: Native ellipsis (`…`) button grouping Save Current Frame, Playback Diagnostics, Fast Preview Mode, and Settings.
+- **Customizable Keyboard Shortcuts**:
+  - Native AppKit Settings tab with an interactive shortcut recorder.
+  - Custom key bindings for Play/Pause, Seek Backward/Forward, Hold to Shuttle Backward/Forward, Toggle 1×/2× Playback, Save Frame, Toggle Diagnostics, Fast Preview Mode, Mute, and Fullscreen.
+  - Displays standard macOS conventions (`⌘`, `⌥`, `⇧`, `⌃`).
+  - Real-time conflict detection and prevention of accidental overrides for essential system shortcuts (`⌘Q`, `⌘W`, `⌘H`, `⌘M`, `⌘,`).
+  - Supports individual shortcut reset and "Restore All Defaults", persisted in `UserDefaults`.
 - **Dual-GPU Power Awareness (MBP 2019)**: Configures `NSSupportsAutomaticGraphicsSwitching` in `Info.plist`, `kCGLPFASupportsAutomaticGraphicsSwitching` + `kCGLPFAAllowOfflineRenderers`, and explicitly selects the integrated **Intel UHD Graphics 630** virtual screen via `CGLSetVirtualScreen` (`cmpv_prefer_integrated_gpu`) even when another process has powered on the discrete **AMD Radeon Pro 5300M**.
 - **Two-Tier Responsive Timeline Scrubbing**: Uses coalesced keyframe seeking (`absolute+keyframes`) while dragging the timeline slider for fast scrubbing across long GOPs, followed by an exact frame-accurate seek (`absolute+exact`) on mouse release.
 - **Optional Fast Preview Mode (`P` Key / `--fast-preview`)**: Strictly opt-in preview mode (`vd-lavc-skiploopfilter=all` + `vd-lavc-fast=yes`) that accelerates decoding and Long-GOP seeking on heavy software-decoded 4K streams without ever silently lowering fidelity by default.
@@ -44,8 +57,9 @@ Sources/
 │   │   └── MPVVideoView.swift          # NSView + CAOpenGLLayer (mpv_render_context)
 │   ├── Services/                       # Reserved conversion interface (decoupled)
 │   │   └── ConversionServiceProtocol.swift
-│   ├── Settings/                       # Centralized, typed user preferences
-│   │   └── UserSettings.swift
+│   ├── Settings/                       # Centralized, typed user preferences & shortcuts
+│   │   ├── UserSettings.swift
+│   │   └── KeyShortcut.swift
 │   └── UI/                             # Native AppKit adaptive window & HUD controls
 │       ├── PlayerWindowController.swift
 │       ├── HUDControlsView.swift

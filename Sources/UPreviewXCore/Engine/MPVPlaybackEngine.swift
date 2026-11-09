@@ -340,6 +340,7 @@ public final class MPVPlaybackEngine: PlaybackEngineProtocol {
             eofReached = false
             seek(to: 0.0, exact: true)
         }
+        isPaused = false
         var flag: Int32 = 0
         mpv_set_property_async(handle, 0, "pause", MPV_FORMAT_FLAG, &flag)
     }
@@ -352,6 +353,7 @@ public final class MPVPlaybackEngine: PlaybackEngineProtocol {
         }
         stateLock.unlock()
 
+        isPaused = true
         var flag: Int32 = 1
         mpv_set_property_async(handle, 0, "pause", MPV_FORMAT_FLAG, &flag)
     }

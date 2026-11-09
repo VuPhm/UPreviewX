@@ -1,5 +1,115 @@
 import AppKit
 
+/// Interactive AppKit button for recording and assigning custom keyboard shortcuts.
+public final class ShortcutRecorderButton: NSButton {
+    public let actionType: ShortcutAction
+    public var onShortcutChanged: ((KeyShortcut) -> Void)?
+    public var onStatusChanged: ((String, Bool) -> Void)?
+
+    public private(set) var isRecording = false {
+        didSet {
+            updateAppearance()
+        }
+    }
+
+    public init(actionType: ShortcutAction) {
+        self.actionType = actionType
+        super.init(frame: .zero)
+        bezelStyle = .rounded
+        font = NSFont.monospacedSystemFont(ofSize: 11.5, weight: .semibold)
+        target = self
+        action = #selector(handleClick)
+        wantsLayer = true
+        updateAppearance()
+    }
+
+    public required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    public override var acceptsFirstResponder: Bool { true }
+
+    public func updateShortcutDisplay() {
+        let sc = UserSettings.shared.shortcut(for: actionType)
+        title = sc.displayString
+        updateAppearance()
+    }
+
+    private func updateAppearance() {
+        if isRecording {
+            title = "Press Shortcut…"
+            layer?.borderColor = NSColor.systemBlue.cgColor
+            layer?.borderWidth = 1.5
+            layer?.cornerRadius = 5
+        } else {
+            let sc = UserSettings.shared.shortcut(for: actionType)
+            title = sc.displayString
+            layer?.borderColor = NSColor.separatorColor.cgColor
+            layer?.borderWidth = 0.5
+            layer?.cornerRadius = 5
+        }
+    }
+
+    @objc private func handleClick() {
+        if isRecording {
+            cancelRecording()
+        } else {
+            startRecording()
+        }
+    }
+
+    public func startRecording() {
+        isRecording = true
+        window?.makeFirstResponder(self)
+        onStatusChanged?("Recording for \"\(actionType.displayName)\". Press new keys, or Esc to cancel.", false)
+    }
+
+    public func cancelRecording() {
+        isRecording = false
+        updateShortcutDisplay()
+        onStatusChanged?("", false)
+    }
+
+    public override func keyDown(with event: NSEvent) {
+        guard isRecording else {
+            super.keyDown(with: event)
+            return
+        }
+
+        // Escape cancels recording
+        if event.keyCode == 53 {
+            cancelRecording()
+            return
+        }
+
+        let relevantMods = event.modifierFlags.intersection([.command, .option, .shift, .control])
+        let candidate = KeyShortcut(keyCode: event.keyCode, modifierFlags: relevantMods)
+
+        let validation = UserSettings.shared.validateShortcut(candidate, for: actionType)
+        switch validation {
+        case .valid:
+            UserSettings.shared.setShortcut(candidate, for: actionType)
+            isRecording = false
+            updateShortcutDisplay()
+            onShortcutChanged?(candidate)
+            onStatusChanged?("Assigned \(candidate.displayString) to \(actionType.displayName).", false)
+        case .reservedBySystem(let reason):
+            NSSound.beep()
+            onStatusChanged?(reason, true)
+        case .conflict(let conflictingAction):
+            NSSound.beep()
+            onStatusChanged?("Cannot assign \(candidate.displayString): conflicts with \"\(conflictingAction.displayName)\".", true)
+        }
+    }
+
+    public override func resignFirstResponder() -> Bool {
+        if isRecording {
+            cancelRecording()
+        }
+        return super.resignFirstResponder()
+    }
+}
+
 /// Native macOS AppKit Settings window controller.
 public final class SettingsWindowController: NSWindowController {
     public static let shared = SettingsWindowController()
@@ -24,10 +134,14 @@ public final class SettingsWindowController: NSWindowController {
     private let capturePatternPopup = NSPopUpButton()
     private let showConfirmationCheckbox = NSButton(checkboxWithTitle: "Show confirmation banner after saving", target: nil, action: nil)
 
+    // Shortcuts Controls
+    private var shortcutButtons: [ShortcutRecorderButton] = []
+    private let shortcutStatusLabel = NSTextField(labelWithString: "")
+
     public init() {
         let styleMask: NSWindow.StyleMask = [.titled, .closable]
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 480, height: 320),
+            contentRect: NSRect(x: 0, y: 0, width: 520, height: 460),
             styleMask: styleMask,
             backing: .buffered,
             defer: false
@@ -56,10 +170,11 @@ public final class SettingsWindowController: NSWindowController {
         guard let win = window, let contentView = win.contentView else { return }
 
         // Top Segmented Bar for Tabs
-        segmentedControl.segmentCount = 3
+        segmentedControl.segmentCount = 4
         segmentedControl.setLabel("General", forSegment: 0)
         segmentedControl.setLabel("Playback", forSegment: 1)
         segmentedControl.setLabel("Frame Capture", forSegment: 2)
+        segmentedControl.setLabel("Shortcuts", forSegment: 3)
         segmentedControl.selectedSegment = 0
         segmentedControl.target = self
         segmentedControl.action = #selector(handleTabSegmentChanged(_:))
@@ -80,6 +195,10 @@ public final class SettingsWindowController: NSWindowController {
         let captureTab = NSTabViewItem(identifier: "FrameCapture")
         captureTab.view = buildCaptureTabView()
         tabView.addTabViewItem(captureTab)
+
+        let shortcutsTab = NSTabViewItem(identifier: "Shortcuts")
+        shortcutsTab.view = buildShortcutsTabView()
+        tabView.addTabViewItem(shortcutsTab)
 
         contentView.addSubview(segmentedControl)
         contentView.addSubview(tabView)
@@ -290,6 +409,132 @@ public final class SettingsWindowController: NSWindowController {
         return view
     }
 
+    private func buildShortcutsTabView() -> NSView {
+        let container = NSView()
+        shortcutButtons.removeAll()
+
+        let headerLabel = NSTextField(labelWithString: "Click any shortcut button to record a new key combination. Press Esc to cancel.")
+        headerLabel.font = .systemFont(ofSize: 11, weight: .regular)
+        headerLabel.textColor = .secondaryLabelColor
+        headerLabel.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(headerLabel)
+
+        let rowsStack = NSStackView()
+        rowsStack.orientation = .vertical
+        rowsStack.alignment = .leading
+        rowsStack.spacing = 7
+        rowsStack.translatesAutoresizingMaskIntoConstraints = false
+
+        for action in ShortcutAction.allCases {
+            let row = buildShortcutRow(for: action)
+            rowsStack.addArrangedSubview(row)
+            row.leadingAnchor.constraint(equalTo: rowsStack.leadingAnchor).isActive = true
+            row.trailingAnchor.constraint(equalTo: rowsStack.trailingAnchor).isActive = true
+        }
+
+        let scrollView = NSScrollView()
+        scrollView.drawsBackground = false
+        scrollView.hasVerticalScroller = true
+        scrollView.hasHorizontalScroller = false
+        scrollView.autohidesScrollers = true
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+
+        let clipView = NSClipView()
+        clipView.drawsBackground = false
+        clipView.documentView = rowsStack
+        scrollView.contentView = clipView
+
+        container.addSubview(scrollView)
+
+        shortcutStatusLabel.font = .systemFont(ofSize: 11, weight: .medium)
+        shortcutStatusLabel.textColor = .systemBlue
+        shortcutStatusLabel.lineBreakMode = .byWordWrapping
+        shortcutStatusLabel.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(shortcutStatusLabel)
+
+        let restoreAllButton = NSButton(title: "Restore All Defaults", target: self, action: #selector(handleRestoreAllShortcuts))
+        restoreAllButton.bezelStyle = .rounded
+        restoreAllButton.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(restoreAllButton)
+
+        NSLayoutConstraint.activate([
+            headerLabel.topAnchor.constraint(equalTo: container.topAnchor, constant: 4),
+            headerLabel.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 8),
+            headerLabel.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -8),
+
+            scrollView.topAnchor.constraint(equalTo: headerLabel.bottomAnchor, constant: 8),
+            scrollView.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 8),
+            scrollView.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -8),
+            scrollView.bottomAnchor.constraint(equalTo: shortcutStatusLabel.topAnchor, constant: -8),
+
+            rowsStack.widthAnchor.constraint(equalTo: scrollView.widthAnchor, constant: -18),
+
+            shortcutStatusLabel.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 8),
+            shortcutStatusLabel.trailingAnchor.constraint(equalTo: restoreAllButton.leadingAnchor, constant: -12),
+            shortcutStatusLabel.centerYAnchor.constraint(equalTo: restoreAllButton.centerYAnchor),
+
+            restoreAllButton.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -8),
+            restoreAllButton.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -4)
+        ])
+
+        return container
+    }
+
+    private func buildShortcutRow(for action: ShortcutAction) -> NSView {
+        let row = NSView()
+        row.translatesAutoresizingMaskIntoConstraints = false
+
+        let titleLabel = NSTextField(labelWithString: action.displayName)
+        titleLabel.font = .systemFont(ofSize: 12, weight: .regular)
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        let recorder = ShortcutRecorderButton(actionType: action)
+        recorder.translatesAutoresizingMaskIntoConstraints = false
+        shortcutButtons.append(recorder)
+
+        recorder.onStatusChanged = { [weak self] message, isError in
+            self?.shortcutStatusLabel.stringValue = message
+            self?.shortcutStatusLabel.textColor = isError ? .systemRed : .systemBlue
+        }
+
+        let resetButton = NSButton()
+        resetButton.bezelStyle = .roundRect
+        resetButton.isBordered = false
+        resetButton.toolTip = "Restore default shortcut"
+        if let img = NSImage(systemSymbolName: "arrow.counterclockwise", accessibilityDescription: "Reset") {
+            let conf = NSImage.SymbolConfiguration(pointSize: 11, weight: .regular)
+            resetButton.image = img.withSymbolConfiguration(conf)
+        }
+        resetButton.target = self
+        resetButton.action = #selector(handleIndividualShortcutReset(_:))
+        resetButton.identifier = NSUserInterfaceItemIdentifier(action.rawValue)
+        resetButton.translatesAutoresizingMaskIntoConstraints = false
+
+        row.addSubview(titleLabel)
+        row.addSubview(recorder)
+        row.addSubview(resetButton)
+
+        NSLayoutConstraint.activate([
+            row.heightAnchor.constraint(equalToConstant: 26),
+
+            titleLabel.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 4),
+            titleLabel.centerYAnchor.constraint(equalTo: row.centerYAnchor),
+            titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: recorder.leadingAnchor, constant: -8),
+
+            recorder.trailingAnchor.constraint(equalTo: resetButton.leadingAnchor, constant: -8),
+            recorder.centerYAnchor.constraint(equalTo: row.centerYAnchor),
+            recorder.widthAnchor.constraint(greaterThanOrEqualToConstant: 100),
+            recorder.heightAnchor.constraint(equalToConstant: 24),
+
+            resetButton.trailingAnchor.constraint(equalTo: row.trailingAnchor, constant: -4),
+            resetButton.centerYAnchor.constraint(equalTo: row.centerYAnchor),
+            resetButton.widthAnchor.constraint(equalToConstant: 20),
+            resetButton.heightAnchor.constraint(equalToConstant: 20)
+        ])
+
+        return row
+    }
+
     // MARK: - State Management
 
     private func loadSettings() {
@@ -326,6 +571,12 @@ public final class SettingsWindowController: NSWindowController {
             }
         }
         showConfirmationCheckbox.state = settings.showCaptureConfirmation ? .on : .off
+
+        // Shortcuts
+        for btn in shortcutButtons {
+            btn.updateShortcutDisplay()
+        }
+        shortcutStatusLabel.stringValue = ""
     }
 
     @objc private func handleTabSegmentChanged(_ sender: NSSegmentedControl) {
@@ -379,5 +630,25 @@ public final class SettingsWindowController: NSWindowController {
         let url = UserSettings.shared.captureOutputDirectoryURL
         try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: url.path)
+    }
+
+    @objc private func handleIndividualShortcutReset(_ sender: NSButton) {
+        guard let raw = sender.identifier?.rawValue,
+              let action = ShortcutAction(rawValue: raw) else { return }
+        UserSettings.shared.resetShortcut(for: action)
+        for btn in shortcutButtons where btn.actionType == action {
+            btn.updateShortcutDisplay()
+        }
+        shortcutStatusLabel.stringValue = "Restored default shortcut for \(action.displayName)."
+        shortcutStatusLabel.textColor = .systemBlue
+    }
+
+    @objc private func handleRestoreAllShortcuts() {
+        UserSettings.shared.resetAllShortcuts()
+        for btn in shortcutButtons {
+            btn.updateShortcutDisplay()
+        }
+        shortcutStatusLabel.stringValue = "Restored all shortcuts to defaults."
+        shortcutStatusLabel.textColor = .systemBlue
     }
 }

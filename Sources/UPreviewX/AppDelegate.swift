@@ -126,6 +126,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         windowControllers.first?.engine.togglePlayPause()
     }
 
+    @objc public func toggleSpeed(_ sender: Any?) {
+        windowControllers.first?.toggleSpeed()
+    }
+
     private func promptToOpenFile(terminateOnCancelIfNoWindows: Bool) {
         let panel = NSOpenPanel()
         panel.title = "Open Video Preview"
@@ -337,6 +341,8 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         let playPauseItem = NSMenuItem(title: "Play / Pause", action: #selector(togglePlayPause(_:)), keyEquivalent: " ")
         playPauseItem.keyEquivalentModifierMask = []
         playbackMenu.addItem(playPauseItem)
+        let speedItem = NSMenuItem(title: "Toggle 1× / 2× Playback", action: #selector(toggleSpeed(_:)), keyEquivalent: "")
+        playbackMenu.addItem(speedItem)
         playbackMenu.addItem(withTitle: "Fast-Forward 5s", action: #selector(fastForward(_:)), keyEquivalent: "")
         playbackMenu.addItem(withTitle: "Rewind 5s", action: #selector(rewind(_:)), keyEquivalent: "")
         playbackMenuItem.submenu = playbackMenu

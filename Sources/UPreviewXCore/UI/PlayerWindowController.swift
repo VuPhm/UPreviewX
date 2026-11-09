@@ -44,7 +44,7 @@ public final class PlayerWindowController: NSWindowController, NSWindowDelegate,
     private var isControlsHidden = false
 
     // Safe Shuttle State
-    private enum ShuttleDirection {
+    public enum ShuttleDirection {
         case forward
         case rewind
     }
@@ -53,13 +53,20 @@ public final class PlayerWindowController: NSWindowController, NSWindowDelegate,
         let direction: ShuttleDirection
         let wasPaused: Bool
         let originalSpeed: Double
-        let isKeyframeSeeking: Bool
+        let triggerKeyCode: UInt16
     }
 
     private var activeShuttleSession: ShuttleSession?
+    public var isShuttleActive: Bool { activeShuttleSession != nil }
     private var shuttleHoldTimer: Timer?
     private var shuttleSeekTimer: Timer?
     private var pendingShuttleDirection: ShuttleDirection?
+    private var pendingShuttleKeyCode: UInt16?
+    private var isShuttleSeekInFlight = false
+    private var pendingShuttleStep: Double?
+
+    // Active Keyboard Shortcuts
+    private var shortcuts: [ShortcutAction: KeyShortcut] = [:]
 
     // Subtle Visual Indicators
     private let shuttleBadgeView = NSVisualEffectView()
@@ -158,6 +165,10 @@ public final class PlayerWindowController: NSWindowController, NSWindowDelegate,
             self?.engine.setVolume(vol)
             self?.resetAutoHideTimer()
         }
+        hudView.onToggleSpeed = { [weak self] in
+            self?.toggleSpeed()
+            self?.resetAutoHideTimer()
+        }
         hudView.onCaptureFrame = { [weak self] in
             self?.captureCurrentFrame()
             self?.resetAutoHideTimer()
@@ -165,6 +176,16 @@ public final class PlayerWindowController: NSWindowController, NSWindowDelegate,
         hudView.onToggleDiagnostics = { [weak self] in
             self?.toggleDiagnosticsOverlay()
             self?.resetAutoHideTimer()
+        }
+        hudView.onToggleFastPreview = { [weak self] in
+            self?.toggleFastPreviewMode()
+            self?.resetAutoHideTimer()
+        }
+        hudView.onOpenSettings = {
+            SettingsWindowController.shared.showSettings()
+        }
+        hudView.isFastPreviewActive = { [weak self] in
+            self?.engine.isFastPreviewMode ?? false
         }
         hudView.onToggleFullscreen = { [weak self] in
             self?.toggleFullscreen()
@@ -217,15 +238,15 @@ public final class PlayerWindowController: NSWindowController, NSWindowDelegate,
         diagnosticsView.isHidden = !showDiagnostics
         container.addSubview(diagnosticsView)
 
-        let preferredHUDWidth = hudView.widthAnchor.constraint(equalToConstant: 530)
+        let preferredHUDWidth = hudView.widthAnchor.constraint(equalToConstant: 440)
         preferredHUDWidth.priority = .defaultLow
 
         NSLayoutConstraint.activate([
             hudView.centerXAnchor.constraint(equalTo: container.centerXAnchor),
             hudView.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -16),
             preferredHUDWidth,
-            hudView.leadingAnchor.constraint(greaterThanOrEqualTo: container.leadingAnchor, constant: 12),
-            hudView.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor, constant: -12),
+            hudView.leadingAnchor.constraint(greaterThanOrEqualTo: container.leadingAnchor, constant: 10),
+            hudView.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor, constant: -10),
             hudView.heightAnchor.constraint(equalToConstant: 38),
 
             shuttleBadgeView.centerXAnchor.constraint(equalTo: container.centerXAnchor),
@@ -255,6 +276,15 @@ public final class PlayerWindowController: NSWindowController, NSWindowDelegate,
         win.onKeyUp = { [weak self] event in
             self?.handleKeyUp(event) ?? false
         }
+
+        reloadShortcuts()
+
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleUserSettingsDidChange),
+            name: .userSettingsDidChange,
+            object: nil
+        )
 
         NotificationCenter.default.addObserver(
             self,
@@ -438,6 +468,15 @@ public final class PlayerWindowController: NSWindowController, NSWindowDelegate,
         }
     }
 
+    public func toggleSpeed() {
+        let current = engine.speed
+        let target = (abs(current - 2.0) < 0.15) ? 1.0 : 2.0
+        engine.setSpeed(target)
+        hudView.updateSpeed(target)
+        showToast(message: target == 2.0 ? "Playback Speed: 2×" : "Playback Speed: 1×")
+        resetAutoHideTimer()
+    }
+
     private func updateWindowTitle(for url: URL) {
         let suffix = engine.isFastPreviewMode ? " — [Fast Preview]" : ""
         window?.title = url.lastPathComponent + suffix
@@ -445,54 +484,75 @@ public final class PlayerWindowController: NSWindowController, NSWindowDelegate,
 
     // MARK: - Safe Shuttle Playback & Seeking
 
-    private func startShuttle(direction: ShuttleDirection) {
+    public func startShuttle(direction: ShuttleDirection, keyCode: UInt16 = 0) {
         guard activeShuttleSession == nil else { return }
         let settings = UserSettings.shared
         let wasPaused = engine.isPaused
         let originalSpeed = engine.speed
 
-        let isHeavy = (settings.fastSeekingBehavior == .keyframesOnly) ||
-                      (!engine.diagnostics.isHardwareAccelerated && (engine.diagnostics.rawWidth >= 3840 || engine.diagnostics.width >= 3840))
-
-        let useKeyframeSeeking = (direction == .rewind) || isHeavy || (settings.fastSeekingBehavior != .auto && settings.fastSeekingBehavior != .exact)
+        let effectiveKeyCode = keyCode != 0 ? keyCode : (direction == .forward ? 124 : 123)
 
         activeShuttleSession = ShuttleSession(
             direction: direction,
             wasPaused: wasPaused,
             originalSpeed: originalSpeed,
-            isKeyframeSeeking: useKeyframeSeeking
+            triggerKeyCode: effectiveKeyCode
         )
 
-        if useKeyframeSeeking {
-            if !wasPaused {
-                engine.pause()
-            }
-            let step = (direction == .forward) ? 2.0 : -2.0
-            engine.seekRelative(step, exact: false)
-            shuttleSeekTimer?.invalidate()
-            shuttleSeekTimer = Timer.scheduledTimer(withTimeInterval: 0.22, repeats: true) { [weak self] _ in
-                self?.engine.seekRelative(step, exact: false)
-            }
-            let badgeText = (direction == .forward) ? "▶▶ Fast Seeking" : "◀◀ Rewind"
-            showShuttleBadge(text: badgeText)
-        } else {
-            let targetSpeed = settings.temporaryFastSpeed
-            engine.setSpeed(targetSpeed)
-            if wasPaused {
-                engine.play()
-            }
-            showShuttleBadge(text: "▶▶ \(Int(targetSpeed))×")
+        // Pause playback during shuttle navigation so decoder focuses purely on keyframe seeking
+        if !wasPaused {
+            engine.pause()
         }
+
+        // Heavy codecs (e.g. software 4K): reduce seeking frequency to avoid decoder stall (0.35s / 4s step); normal: 0.18s / 2s step
+        let isHeavy = (settings.fastSeekingBehavior == .keyframesOnly) ||
+                      (!engine.diagnostics.isHardwareAccelerated && (engine.diagnostics.rawWidth >= 3840 || engine.diagnostics.width >= 3840))
+
+        let interval: TimeInterval = isHeavy ? 0.35 : 0.18
+        let step = (direction == .forward) ? (isHeavy ? 4.0 : 2.0) : (isHeavy ? -4.0 : -2.0)
+
+        // Perform initial seek immediately
+        performShuttleSeek(step: step)
+
+        shuttleSeekTimer?.invalidate()
+        shuttleSeekTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
+            self?.performShuttleSeek(step: step)
+        }
+
+        let badgeText = (direction == .forward) ? "▶▶ Shuttle Forward" : "◀◀ Shuttle Rewind"
+        showShuttleBadge(text: badgeText)
         showControlsImmediately()
+    }
+
+    private func performShuttleSeek(step: Double) {
+        guard activeShuttleSession != nil else { return }
+        if isShuttleSeekInFlight {
+            pendingShuttleStep = step
+            return
+        }
+        isShuttleSeekInFlight = true
+        pendingShuttleStep = nil
+        engine.seekRelative(step, exact: false)
+    }
+
+    private func handleShuttleSeekCompleted() {
+        isShuttleSeekInFlight = false
+        if let nextStep = pendingShuttleStep, activeShuttleSession != nil {
+            pendingShuttleStep = nil
+            performShuttleSeek(step: nextStep)
+        }
     }
 
     public func endShuttle(restoreOriginalState: Bool = true) {
         shuttleHoldTimer?.invalidate()
         shuttleHoldTimer = nil
         pendingShuttleDirection = nil
+        pendingShuttleKeyCode = nil
 
         shuttleSeekTimer?.invalidate()
         shuttleSeekTimer = nil
+        pendingShuttleStep = nil
+        isShuttleSeekInFlight = false
 
         hideShuttleBadge()
 
@@ -685,70 +745,99 @@ public final class PlayerWindowController: NSWindowController, NSWindowDelegate,
 
     // MARK: - Keyboard Shortcuts
 
+    @objc private func handleUserSettingsDidChange() {
+        reloadShortcuts()
+    }
+
+    private func reloadShortcuts() {
+        var map: [ShortcutAction: KeyShortcut] = [:]
+        for action in ShortcutAction.allCases {
+            map[action] = UserSettings.shared.shortcut(for: action)
+        }
+        self.shortcuts = map
+    }
+
     private func handleKeyDown(_ event: NSEvent) -> Bool {
         showControlsImmediately()
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
 
-        if flags.contains(.command) {
-            if flags.contains(.shift) && event.charactersIgnoringModifiers?.lowercased() == "s" {
-                captureCurrentFrame()
-                return true
-            }
-            if event.charactersIgnoringModifiers?.lowercased() == "i" {
-                toggleDiagnosticsOverlay()
-                return true
-            }
-            if event.charactersIgnoringModifiers == "," {
-                SettingsWindowController.shared.showSettings()
-                return true
-            }
-            return false
+        if flags.contains(.command) && event.charactersIgnoringModifiers == "," {
+            SettingsWindowController.shared.showSettings()
+            return true
         }
 
         if hudView.timelineSlider.isUserScrubbing {
             return false
         }
 
-        switch event.keyCode {
-        case 49: // Space
+        // 1. Configurable instant action shortcuts
+        if shortcuts[.saveFrame]?.matches(event: event) == true {
+            captureCurrentFrame()
+            return true
+        }
+        if shortcuts[.toggleDiagnostics]?.matches(event: event) == true {
+            toggleDiagnosticsOverlay()
+            return true
+        }
+        if shortcuts[.toggleFastPreview]?.matches(event: event) == true {
+            toggleFastPreviewMode()
+            return true
+        }
+        if shortcuts[.toggleSpeed]?.matches(event: event) == true {
+            toggleSpeed()
+            return true
+        }
+        if shortcuts[.toggleMute]?.matches(event: event) == true {
+            engine.toggleMute()
+            return true
+        }
+        if shortcuts[.toggleFullscreen]?.matches(event: event) == true {
+            toggleFullscreen()
+            return true
+        }
+        if shortcuts[.playPause]?.matches(event: event) == true {
             endShuttle(restoreOriginalState: true)
             engine.togglePlayPause()
             return true
-        case 123: // Left Arrow
+        }
+
+        // 2. Rewind Seek / Shuttle
+        let isRewindMatch = (shortcuts[.shuttleBackward]?.matches(event: event) == true) ||
+                            (shortcuts[.seekBackward]?.matches(event: event) == true)
+        if isRewindMatch {
             if event.isARepeat { return true }
             if activeShuttleSession != nil || shuttleHoldTimer != nil { return true }
             pendingShuttleDirection = .rewind
-            shuttleHoldTimer = Timer.scheduledTimer(withTimeInterval: 0.20, repeats: false) { [weak self] _ in
+            pendingShuttleKeyCode = event.keyCode
+            shuttleHoldTimer = Timer.scheduledTimer(withTimeInterval: 0.18, repeats: false) { [weak self] _ in
                 self?.shuttleHoldTimer = nil
-                self?.startShuttle(direction: .rewind)
+                self?.startShuttle(direction: .rewind, keyCode: event.keyCode)
             }
             return true
-        case 124: // Right Arrow
+        }
+
+        // 3. Forward Seek / Shuttle
+        let isForwardMatch = (shortcuts[.shuttleForward]?.matches(event: event) == true) ||
+                             (shortcuts[.seekForward]?.matches(event: event) == true)
+        if isForwardMatch {
             if event.isARepeat { return true }
             if activeShuttleSession != nil || shuttleHoldTimer != nil { return true }
             pendingShuttleDirection = .forward
-            shuttleHoldTimer = Timer.scheduledTimer(withTimeInterval: 0.20, repeats: false) { [weak self] _ in
+            pendingShuttleKeyCode = event.keyCode
+            shuttleHoldTimer = Timer.scheduledTimer(withTimeInterval: 0.18, repeats: false) { [weak self] _ in
                 self?.shuttleHoldTimer = nil
-                self?.startShuttle(direction: .forward)
+                self?.startShuttle(direction: .forward, keyCode: event.keyCode)
             }
             return true
+        }
+
+        // 4. Default Volume & Escape keys
+        switch event.keyCode {
         case 126: // Up Arrow
             engine.setVolume(engine.volume + 5.0)
             return true
         case 125: // Down Arrow
             engine.setVolume(engine.volume - 5.0)
-            return true
-        case 46: // M
-            engine.toggleMute()
-            return true
-        case 3: // F
-            toggleFullscreen()
-            return true
-        case 2: // D
-            toggleDiagnosticsOverlay()
-            return true
-        case 35: // P
-            toggleFastPreviewMode()
             return true
         case 53: // Escape
             if isFullscreen {
@@ -764,40 +853,34 @@ public final class PlayerWindowController: NSWindowController, NSWindowDelegate,
     private func handleKeyUp(_ event: NSEvent) -> Bool {
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
 
-        switch event.keyCode {
-        case 123: // Left Arrow released
-            if shuttleHoldTimer != nil {
-                shuttleHoldTimer?.invalidate()
-                shuttleHoldTimer = nil
-                pendingShuttleDirection = nil
-                let exact = flags.contains(.shift)
+        // 1. Released before hold threshold -> short seek
+        if let pendingCode = pendingShuttleKeyCode, pendingCode == event.keyCode, shuttleHoldTimer != nil {
+            shuttleHoldTimer?.invalidate()
+            shuttleHoldTimer = nil
+            let dir = pendingShuttleDirection
+            pendingShuttleDirection = nil
+            pendingShuttleKeyCode = nil
+
+            let exact = flags.contains(.shift)
+            if dir == .rewind {
                 let step = exact ? -1.0 : -5.0
                 engine.seekRelative(step, exact: exact)
                 return true
-            } else if activeShuttleSession?.direction == .rewind {
-                endShuttle(restoreOriginalState: true)
-                return true
-            }
-            return false
-
-        case 124: // Right Arrow released
-            if shuttleHoldTimer != nil {
-                shuttleHoldTimer?.invalidate()
-                shuttleHoldTimer = nil
-                pendingShuttleDirection = nil
-                let exact = flags.contains(.shift)
+            } else if dir == .forward {
                 let step = exact ? 1.0 : 5.0
                 engine.seekRelative(step, exact: exact)
                 return true
-            } else if activeShuttleSession?.direction == .forward {
-                endShuttle(restoreOriginalState: true)
-                return true
             }
             return false
-
-        default:
-            return false
         }
+
+        // 2. Active shuttle release: matches by triggerKeyCode regardless of modifier changes
+        if let session = activeShuttleSession, session.triggerKeyCode == event.keyCode {
+            endShuttle(restoreOriginalState: true)
+            return true
+        }
+
+        return false
     }
 
     @objc private func handleAppDidResignActive() {
@@ -876,6 +959,7 @@ public final class PlayerWindowController: NSWindowController, NSWindowDelegate,
     public func playbackEngineDidLoadFile(_ engine: PlaybackEngineProtocol) {
         hudView.updatePosition(engine.position, duration: engine.duration)
         hudView.updatePauseState(isPaused: engine.isPaused)
+        hudView.updateSpeed(engine.speed)
         hudView.updateVolume(engine.volume, isMuted: engine.isMuted)
         diagnosticsView.update(with: engine.diagnostics)
     }
@@ -908,7 +992,12 @@ public final class PlayerWindowController: NSWindowController, NSWindowDelegate,
     }
 
     public func playbackEngine(_ engine: PlaybackEngineProtocol, didCompleteSeek latencyMs: Double) {
+        handleShuttleSeekCompleted()
         diagnosticsView.update(with: engine.diagnostics)
+    }
+
+    public func playbackEngine(_ engine: PlaybackEngineProtocol, didUpdateSpeed speed: Double) {
+        hudView.updateSpeed(speed)
     }
 
     public func playbackEngine(_ engine: PlaybackEngineProtocol, didUpdateDiagnostics diagnostics: PlaybackDiagnostics) {

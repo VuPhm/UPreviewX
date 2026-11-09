@@ -354,8 +354,9 @@ final class UPreviewXTests: XCTestCase {
             return
         }
 
-        // Initially at 1.0x speed
+        // Initially at 1.0x speed and paused
         XCTAssertEqual(controller.engine.speed, 1.0)
+        XCTAssertFalse(controller.isShuttleActive)
 
         // 1. Simulate key hold on Right Arrow (keyCode 124)
         guard let keyDownEvent = NSEvent.keyEvent(
@@ -379,8 +380,9 @@ final class UPreviewXTests: XCTestCase {
         // Wait 250ms for hold timer to trigger shuttle mode
         let exp = expectation(description: "shuttle activated")
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
-            // Speed should now be fast speed (2.0x)
-            XCTAssertEqual(controller.engine.speed, 2.0, accuracy: 0.1)
+            // Shuttle is active without conflating with speed playback (speed remains 1.0x!)
+            XCTAssertTrue(controller.isShuttleActive)
+            XCTAssertEqual(controller.engine.speed, 1.0)
 
             // Simulate repeated keydown events during hold (key repeat)
             if let repeatEvent = NSEvent.keyEvent(
@@ -396,8 +398,9 @@ final class UPreviewXTests: XCTestCase {
                 keyCode: 124
             ) {
                 win.keyDown(with: repeatEvent)
-                // Speed remains 2.0x, does not break or crash
-                XCTAssertEqual(controller.engine.speed, 2.0, accuracy: 0.1)
+                // Shuttle remains active, speed unchanged, does not break or crash
+                XCTAssertTrue(controller.isShuttleActive)
+                XCTAssertEqual(controller.engine.speed, 1.0)
             }
 
             // 2. Simulate keyUp on Right Arrow
@@ -414,8 +417,9 @@ final class UPreviewXTests: XCTestCase {
                 keyCode: 124
             ) {
                 win.keyUp(with: keyUpEvent)
-                // Speed must be restored to original 1.0x immediately
-                XCTAssertEqual(controller.engine.speed, 1.0, accuracy: 0.1)
+                // Shuttle must end immediately and restore state
+                XCTAssertFalse(controller.isShuttleActive)
+                XCTAssertEqual(controller.engine.speed, 1.0)
             }
             exp.fulfill()
         }
@@ -426,13 +430,147 @@ final class UPreviewXTests: XCTestCase {
         win.keyDown(with: keyDownEvent)
         let focusExp = expectation(description: "shuttle cancelled on focus loss")
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
-            XCTAssertEqual(controller.engine.speed, 2.0, accuracy: 0.1)
+            XCTAssertTrue(controller.isShuttleActive)
             // Trigger resign key
             controller.windowDidResignKey(Notification(name: NSWindow.didResignKeyNotification))
-            XCTAssertEqual(controller.engine.speed, 1.0, accuracy: 0.1)
+            XCTAssertFalse(controller.isShuttleActive)
+            XCTAssertEqual(controller.engine.speed, 1.0)
             focusExp.fulfill()
         }
         wait(for: [focusExp], timeout: 2.0)
+    }
+
+    func testSeparateShuttleFromSpeedPlayback() {
+        let controller = PlayerWindowController(showDiagnostics: false)
+        guard controller.window is PlayerWindow else {
+            XCTFail("Window should be PlayerWindow")
+            return
+        }
+
+        // 1. Verify 2x Speed Mode is selectable and separate from shuttle
+        XCTAssertEqual(controller.engine.speed, 1.0)
+        controller.toggleSpeed()
+        XCTAssertEqual(controller.engine.speed, 2.0)
+        controller.toggleSpeed()
+        XCTAssertEqual(controller.engine.speed, 1.0)
+
+        // 2. Scenario 2: Paused -> hold forward shuttle -> release -> remains paused at new position
+        controller.engine.pause()
+        XCTAssertTrue(controller.engine.isPaused)
+
+        controller.startShuttle(direction: .forward, keyCode: 124)
+        XCTAssertTrue(controller.isShuttleActive)
+        controller.endShuttle(restoreOriginalState: true)
+        XCTAssertFalse(controller.isShuttleActive)
+        XCTAssertTrue(controller.engine.isPaused, "Video must remain paused after releasing shuttle from paused state")
+
+        // 3. Scenario 3: Paused -> hold reverse shuttle -> release -> remains paused
+        controller.startShuttle(direction: .rewind, keyCode: 123)
+        XCTAssertTrue(controller.isShuttleActive)
+        controller.endShuttle(restoreOriginalState: true)
+        XCTAssertFalse(controller.isShuttleActive)
+        XCTAssertTrue(controller.engine.isPaused, "Video must remain paused after reverse shuttle from paused state")
+
+        // 4. Scenario 1: Playing -> hold forward shuttle -> release -> resumes 1x playback
+        controller.engine.play()
+        XCTAssertFalse(controller.engine.isPaused)
+        controller.startShuttle(direction: .forward, keyCode: 124)
+        XCTAssertTrue(controller.isShuttleActive)
+        controller.endShuttle(restoreOriginalState: true)
+        XCTAssertFalse(controller.isShuttleActive)
+        XCTAssertFalse(controller.engine.isPaused, "Video must resume playing after releasing shuttle from playing state")
+        XCTAssertEqual(controller.engine.speed, 1.0, "Speed must remain 1.0x")
+
+        // 5. Shuttle while at 2x playback restores 2x playback on release
+        controller.toggleSpeed() // Now at 2x
+        XCTAssertEqual(controller.engine.speed, 2.0)
+        controller.startShuttle(direction: .forward, keyCode: 124)
+        XCTAssertTrue(controller.isShuttleActive)
+        controller.endShuttle(restoreOriginalState: true)
+        XCTAssertFalse(controller.isShuttleActive)
+        XCTAssertEqual(controller.engine.speed, 2.0, "Speed must be restored to 2.0x after shuttle")
+    }
+
+    func testCustomizableShortcutsPersistenceAndConflictDetection() {
+        let settings = UserSettings.shared
+
+        // 1. Verify default shortcuts
+        XCTAssertEqual(settings.shortcut(for: .playPause), KeyShortcut.defaultShortcut(for: .playPause))
+        XCTAssertEqual(settings.shortcut(for: .seekBackward), KeyShortcut.defaultShortcut(for: .seekBackward))
+        XCTAssertEqual(settings.shortcut(for: .shuttleBackward), KeyShortcut.defaultShortcut(for: .shuttleBackward))
+        XCTAssertEqual(settings.shortcut(for: .toggleSpeed).displayKeyName, "2")
+        XCTAssertEqual(settings.shortcut(for: .saveFrame).modifierFlags, [.command, .shift])
+
+        // 2. Allow pairing of seekBackward & shuttleBackward on the same key
+        let leftArrowShortcut = KeyShortcut(keyCode: 123, modifierFlags: [])
+        let validationPair = settings.validateShortcut(leftArrowShortcut, for: .shuttleBackward)
+        XCTAssertEqual(validationPair, .valid, "Tap seek and hold shuttle actions are permitted to share the same key")
+
+        // 3. Conflict detection: Assigning Space (currently Play/Pause) to Mute must be flagged as conflict
+        let spaceShortcut = KeyShortcut(keyCode: 49, modifierFlags: [])
+        let conflictValidation = settings.validateShortcut(spaceShortcut, for: .toggleMute)
+        XCTAssertEqual(conflictValidation, .conflict(.playPause), "Conflicting shortcut assignments must be rejected")
+
+        // 4. Reserved macOS system shortcuts must be rejected
+        let cmdQ = KeyShortcut(keyCode: 12, modifierFlags: [.command])
+        let cmdQValidation = settings.validateShortcut(cmdQ, for: .toggleSpeed)
+        if case .reservedBySystem = cmdQValidation {
+            // Expected
+        } else {
+            XCTFail("⌘Q must be rejected as reserved system shortcut")
+        }
+
+        let cmdW = KeyShortcut(keyCode: 13, modifierFlags: [.command])
+        let cmdWValidation = settings.validateShortcut(cmdW, for: .saveFrame)
+        if case .reservedBySystem = cmdWValidation {
+            // Expected
+        } else {
+            XCTFail("⌘W must be rejected as reserved system shortcut")
+        }
+
+        // 5. Custom shortcut assignment and persistence
+        let customMute = KeyShortcut(keyCode: 45, modifierFlags: [], displayKeyName: "N") // 'N' key
+        settings.setShortcut(customMute, for: .toggleMute)
+        XCTAssertEqual(settings.shortcut(for: .toggleMute), customMute)
+
+        // 6. Reset individual shortcut
+        settings.resetShortcut(for: .toggleMute)
+        XCTAssertEqual(settings.shortcut(for: .toggleMute), KeyShortcut.defaultShortcut(for: .toggleMute))
+
+        // 7. Reset all shortcuts
+        settings.setShortcut(customMute, for: .toggleMute)
+        settings.resetAllShortcuts()
+        XCTAssertEqual(settings.shortcut(for: .toggleMute), KeyShortcut.defaultShortcut(for: .toggleMute))
+    }
+
+    func testCompactHUDVolumeHoverAndOverflowMenu() {
+        let hud = HUDControlsView(frame: NSRect(x: 0, y: 0, width: 320, height: 38))
+
+        // 1. Volume slider is hidden by default and takes zero space
+        XCTAssertTrue(hud.volumeSlider.isHidden, "Volume slider must be hidden by default to avoid reserving space")
+
+        // 2. Primary controls do not include screenshot / camera button (moved to overflow menu)
+        let primarySubviews = hud.subviews.first?.subviews ?? []
+        // None of the primary subviews should be a camera button
+        for sub in primarySubviews {
+            if let btn = sub as? NSButton, btn.toolTip?.contains("Save Current Frame") == true {
+                XCTFail("Screenshot button must not be present in primary HUD bar")
+            }
+        }
+
+        // 3. Overflow menu contains required secondary actions
+        let overflowMenu = hud.buildOverflowMenu()
+        let titles = overflowMenu.items.map { $0.title }
+        XCTAssertTrue(titles.contains("Save Current Frame"))
+        XCTAssertTrue(titles.contains("Playback Diagnostics"))
+        XCTAssertTrue(titles.contains("Fast Preview Mode"))
+        XCTAssertTrue(titles.contains("Settings…"))
+
+        // 4. Speed button displays 1x by default and updates to 2x
+        hud.updateSpeed(1.0)
+        XCTAssertEqual(hud.speedButton.title, "1×")
+        hud.updateSpeed(2.0)
+        XCTAssertEqual(hud.speedButton.title, "2×")
     }
 }
 

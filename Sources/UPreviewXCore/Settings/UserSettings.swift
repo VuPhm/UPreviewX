@@ -80,6 +80,8 @@ public final class UserSettings {
         static let captureImageFormat = "captureImageFormat"
         static let captureFilenamePattern = "captureFilenamePattern"
         static let showCaptureConfirmation = "showCaptureConfirmation"
+
+        static let customShortcutsData = "customShortcutsData"
     }
 
     private func registerDefaults() {
@@ -250,9 +252,81 @@ public final class UserSettings {
         }
     }
 
+    // MARK: - Customizable Keyboard Shortcuts
+
+    public enum ShortcutValidationResult: Equatable {
+        case valid
+        case reservedBySystem(String)
+        case conflict(ShortcutAction)
+    }
+
+    public func shortcut(for action: ShortcutAction) -> KeyShortcut {
+        if let data = defaults.data(forKey: Key.customShortcutsData),
+           let dict = try? JSONDecoder().decode([String: KeyShortcut].self, from: data),
+           let custom = dict[action.rawValue] {
+            return custom
+        }
+        return KeyShortcut.defaultShortcut(for: action)
+    }
+
+    public func setShortcut(_ shortcut: KeyShortcut, for action: ShortcutAction) {
+        var dict: [String: KeyShortcut] = [:]
+        if let data = defaults.data(forKey: Key.customShortcutsData),
+           let existing = try? JSONDecoder().decode([String: KeyShortcut].self, from: data) {
+            dict = existing
+        }
+        dict[action.rawValue] = shortcut
+        if let encoded = try? JSONEncoder().encode(dict) {
+            defaults.set(encoded, forKey: Key.customShortcutsData)
+            notifyChanged()
+        }
+    }
+
+    public func resetShortcut(for action: ShortcutAction) {
+        if let data = defaults.data(forKey: Key.customShortcutsData),
+           var dict = try? JSONDecoder().decode([String: KeyShortcut].self, from: data) {
+            dict.removeValue(forKey: action.rawValue)
+            if let encoded = try? JSONEncoder().encode(dict) {
+                defaults.set(encoded, forKey: Key.customShortcutsData)
+                notifyChanged()
+            }
+        }
+    }
+
+    public func resetAllShortcuts() {
+        defaults.removeObject(forKey: Key.customShortcutsData)
+        notifyChanged()
+    }
+
+    public func validateShortcut(_ candidate: KeyShortcut, for targetAction: ShortcutAction) -> ShortcutValidationResult {
+        if KeyShortcut.isReservedSystemShortcut(keyCode: candidate.keyCode, modifierFlags: candidate.modifierFlags) {
+            return .reservedBySystem("⌘\(candidate.displayKeyName) is reserved by macOS system shortcuts.")
+        }
+
+        for action in ShortcutAction.allCases {
+            guard action != targetAction else { continue }
+
+            // Allow paired tap/hold shortcuts to share the same physical key
+            if (targetAction == .seekBackward && action == .shuttleBackward) ||
+               (targetAction == .shuttleBackward && action == .seekBackward) ||
+               (targetAction == .seekForward && action == .shuttleForward) ||
+               (targetAction == .shuttleForward && action == .seekForward) {
+                continue
+            }
+
+            let current = shortcut(for: action)
+            if current == candidate {
+                return .conflict(action)
+            }
+        }
+
+        return .valid
+    }
+
     private func notifyChanged() {
         DispatchQueue.main.async {
             NotificationCenter.default.post(name: .userSettingsDidChange, object: self)
         }
     }
 }
+
