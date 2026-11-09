@@ -239,7 +239,7 @@ public final class PlayerWindowController: NSWindowController, NSWindowDelegate,
         container.addSubview(diagnosticsView)
 
         let preferredHUDWidth = hudView.widthAnchor.constraint(equalToConstant: 440)
-        preferredHUDWidth.priority = .defaultLow
+        preferredHUDWidth.priority = .defaultHigh
 
         NSLayoutConstraint.activate([
             hudView.centerXAnchor.constraint(equalTo: container.centerXAnchor),

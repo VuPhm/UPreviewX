@@ -176,3 +176,4 @@ public struct KeyShortcut: Codable, Equatable, Sendable {
         return false
     }
 }
+

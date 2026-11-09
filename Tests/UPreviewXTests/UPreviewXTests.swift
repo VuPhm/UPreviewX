@@ -349,6 +349,7 @@ final class UPreviewXTests: XCTestCase {
 
     func testPressAndHoldShuttleStateTransitionsAndKeyRepeat() {
         let controller = PlayerWindowController(showDiagnostics: false)
+        defer { controller.engine.shutdown() }
         guard let win = controller.window as? PlayerWindow else {
             XCTFail("Window should be PlayerWindow")
             return
@@ -442,6 +443,7 @@ final class UPreviewXTests: XCTestCase {
 
     func testSeparateShuttleFromSpeedPlayback() {
         let controller = PlayerWindowController(showDiagnostics: false)
+        defer { controller.engine.shutdown() }
         guard controller.window is PlayerWindow else {
             XCTFail("Window should be PlayerWindow")
             return

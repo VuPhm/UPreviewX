@@ -367,6 +367,9 @@ public final class MPVPlaybackEngine: PlaybackEngineProtocol {
     }
 
     public func setSpeed(_ newSpeed: Double) {
+        var clamped = max(0.1, min(16.0, newSpeed))
+        speed = clamped
+
         stateLock.lock()
         guard let handle = mpvHandle else {
             stateLock.unlock()
@@ -374,8 +377,6 @@ public final class MPVPlaybackEngine: PlaybackEngineProtocol {
         }
         stateLock.unlock()
 
-        var clamped = max(0.1, min(16.0, newSpeed))
-        speed = clamped
         mpv_set_property_async(handle, 0, "speed", MPV_FORMAT_DOUBLE, &clamped)
     }
 

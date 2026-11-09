@@ -141,7 +141,7 @@ public final class SettingsWindowController: NSWindowController {
     public init() {
         let styleMask: NSWindow.StyleMask = [.titled, .closable]
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 520, height: 460),
+            contentRect: NSRect(x: 0, y: 0, width: 480, height: 430),
             styleMask: styleMask,
             backing: .buffered,
             defer: false
@@ -149,6 +149,9 @@ public final class SettingsWindowController: NSWindowController {
         window.title = "UPreviewX Settings"
         window.center()
         window.isReleasedWhenClosed = false
+        window.minSize = NSSize(width: 480, height: 430)
+        window.maxSize = NSSize(width: 480, height: 430)
+        window.showsResizeIndicator = false
         super.init(window: window)
 
         setupUI()
@@ -161,6 +164,7 @@ public final class SettingsWindowController: NSWindowController {
 
     public func showSettings() {
         loadSettings()
+        window?.setContentSize(NSSize(width: 480, height: 430))
         showWindow(nil)
         window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
@@ -204,6 +208,9 @@ public final class SettingsWindowController: NSWindowController {
         contentView.addSubview(tabView)
 
         NSLayoutConstraint.activate([
+            contentView.widthAnchor.constraint(equalToConstant: 480),
+            contentView.heightAnchor.constraint(equalToConstant: 430),
+
             segmentedControl.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 16),
             segmentedControl.centerXAnchor.constraint(equalTo: contentView.centerXAnchor),
             segmentedControl.heightAnchor.constraint(equalToConstant: 24),
@@ -337,19 +344,27 @@ public final class SettingsWindowController: NSWindowController {
         capturePathField.isSelectable = true
         capturePathField.isEditable = false
         capturePathField.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        capturePathField.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
         let chooseFolderButton = NSButton(title: "Choose…", target: self, action: #selector(handleChooseCaptureFolder))
+        chooseFolderButton.setContentHuggingPriority(.required, for: .horizontal)
+        chooseFolderButton.setContentCompressionResistancePriority(.required, for: .horizontal)
+
         let revealButton = NSButton(title: "Reveal", target: self, action: #selector(handleRevealCaptureFolder))
+        revealButton.setContentHuggingPriority(.required, for: .horizontal)
+        revealButton.setContentCompressionResistancePriority(.required, for: .horizontal)
 
         let folderRow = NSStackView(views: [capturePathField, chooseFolderButton, revealButton])
         folderRow.orientation = .horizontal
         folderRow.alignment = .centerY
         folderRow.spacing = 8
+        folderRow.translatesAutoresizingMaskIntoConstraints = false
 
         let folderBox = NSStackView(views: [folderLabel, folderRow])
         folderBox.orientation = .vertical
         folderBox.alignment = .leading
         folderBox.spacing = 4
+        folderBox.translatesAutoresizingMaskIntoConstraints = false
 
         // Image Format
         let formatLabel = NSTextField(labelWithString: "Image format:")
@@ -416,6 +431,8 @@ public final class SettingsWindowController: NSWindowController {
         let headerLabel = NSTextField(labelWithString: "Click any shortcut button to record a new key combination. Press Esc to cancel.")
         headerLabel.font = .systemFont(ofSize: 11, weight: .regular)
         headerLabel.textColor = .secondaryLabelColor
+        headerLabel.lineBreakMode = .byWordWrapping
+        headerLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         headerLabel.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(headerLabel)
 
@@ -448,12 +465,15 @@ public final class SettingsWindowController: NSWindowController {
 
         shortcutStatusLabel.font = .systemFont(ofSize: 11, weight: .medium)
         shortcutStatusLabel.textColor = .systemBlue
-        shortcutStatusLabel.lineBreakMode = .byWordWrapping
+        shortcutStatusLabel.lineBreakMode = .byTruncatingTail
+        shortcutStatusLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         shortcutStatusLabel.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(shortcutStatusLabel)
 
         let restoreAllButton = NSButton(title: "Restore All Defaults", target: self, action: #selector(handleRestoreAllShortcuts))
         restoreAllButton.bezelStyle = .rounded
+        restoreAllButton.setContentHuggingPriority(.required, for: .horizontal)
+        restoreAllButton.setContentCompressionResistancePriority(.required, for: .horizontal)
         restoreAllButton.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(restoreAllButton)
 
@@ -486,10 +506,14 @@ public final class SettingsWindowController: NSWindowController {
 
         let titleLabel = NSTextField(labelWithString: action.displayName)
         titleLabel.font = .systemFont(ofSize: 12, weight: .regular)
+        titleLabel.lineBreakMode = .byTruncatingTail
+        titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
 
         let recorder = ShortcutRecorderButton(actionType: action)
         recorder.translatesAutoresizingMaskIntoConstraints = false
+        recorder.setContentHuggingPriority(.required, for: .horizontal)
+        recorder.setContentCompressionResistancePriority(.required, for: .horizontal)
         shortcutButtons.append(recorder)
 
         recorder.onStatusChanged = { [weak self] message, isError in
@@ -508,6 +532,8 @@ public final class SettingsWindowController: NSWindowController {
         resetButton.target = self
         resetButton.action = #selector(handleIndividualShortcutReset(_:))
         resetButton.identifier = NSUserInterfaceItemIdentifier(action.rawValue)
+        resetButton.setContentHuggingPriority(.required, for: .horizontal)
+        resetButton.setContentCompressionResistancePriority(.required, for: .horizontal)
         resetButton.translatesAutoresizingMaskIntoConstraints = false
 
         row.addSubview(titleLabel)
@@ -523,7 +549,7 @@ public final class SettingsWindowController: NSWindowController {
 
             recorder.trailingAnchor.constraint(equalTo: resetButton.leadingAnchor, constant: -8),
             recorder.centerYAnchor.constraint(equalTo: row.centerYAnchor),
-            recorder.widthAnchor.constraint(greaterThanOrEqualToConstant: 100),
+            recorder.widthAnchor.constraint(equalToConstant: 110),
             recorder.heightAnchor.constraint(equalToConstant: 24),
 
             resetButton.trailingAnchor.constraint(equalTo: row.trailingAnchor, constant: -4),
