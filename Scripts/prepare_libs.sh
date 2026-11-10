@@ -80,6 +80,14 @@ while queue:
                 dep_real = os.path.realpath(os.path.join(brew_lib, "lib", dep_base))
             if os.path.exists(dep_real) and dep_base not in visited:
                 queue.append((dep_base, dep_real))
+
+    # Strip any leaked development/Cellar LC_RPATH entries
+    rpath_out = subprocess.check_output(["otool", "-l", target_path], text=True)
+    for line in rpath_out.splitlines():
+        l_str = line.strip()
+        if l_str.startswith("path /") and ("cellar" in l_str.lower() or "homebrew" in l_str.lower() or "/usr/local" in l_str or "documents/agy" in l_str.lower()):
+            leaked_rpath = l_str.split("path ")[1].split(" (offset")[0].strip()
+            subprocess.run(["install_name_tool", "-delete_rpath", leaked_rpath, target_path], check=False)
 PYEOF
 else
     echo "Error: Could not find libmpv.2.dylib in ${SOURCE_FW_DIR} or Homebrew." >&2

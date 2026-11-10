@@ -68,6 +68,22 @@ if [ -f "${FRAMEWORKS_DIR}/libmpv.2.dylib" ] && [ ! -e "${FRAMEWORKS_DIR}/libmpv
     (cd "${FRAMEWORKS_DIR}" && ln -sf libmpv.2.dylib libmpv.dylib)
 fi
 
+echo "==> Stripping leaked development and Homebrew rpaths from bundled libraries..."
+python3 - "${FRAMEWORKS_DIR}" <<'PYEOF'
+import os, subprocess, sys
+
+fw_dir = sys.argv[1]
+for f in os.listdir(fw_dir):
+    p = os.path.join(fw_dir, f)
+    if os.path.isfile(p) and not os.path.islink(p) and f.endswith(".dylib"):
+        rpath_out = subprocess.check_output(["otool", "-l", p], text=True)
+        for line in rpath_out.splitlines():
+            l_str = line.strip()
+            if l_str.startswith("path /") and ("cellar" in l_str.lower() or "homebrew" in l_str.lower() or "/usr/local" in l_str or "documents/agy" in l_str.lower()):
+                leaked_rpath = l_str.split("path ")[1].split(" (offset")[0].strip()
+                subprocess.run(["install_name_tool", "-delete_rpath", leaked_rpath, p], check=False)
+PYEOF
+
 echo "==> Signing UPreviewX.app bundle (ad-hoc)..."
 for dylib in "${FRAMEWORKS_DIR}"/*.dylib; do
     if [ ! -L "${dylib}" ]; then
