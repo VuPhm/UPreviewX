@@ -64,7 +64,10 @@ UPreviewX là phần mềm mã nguồn mở độc lập và được ký số a
 
 ## 3. Điểm nổi bật & Tính năng chính
 
-- **Mở video tức thì, không màn hình chờ**: Nhấp đúp vào video hoặc dùng **Open With**, cửa sổ phát lập tức hiển thị và bắt đầu phát lại.
+- **Mở video tức thì, không màn hình chờ & Ổn định hình học (Geometry Stability)**:
+  - Nhấp đúp vào video hoặc dùng **Open With**, cửa sổ phát lập tức hiển thị và bắt đầu phát lại.
+  - **Trích xuất thông số hiển thị siêu tốc (Metadata Preflight < 20 ms)**: Phân tích trước ma trận biến đổi affine và xoay góc qua `AVURLAsset` chỉ trong ~14–19 ms, thiết lập kích thước và tỷ lệ khung hình cửa sổ chính xác ngay trước khi hiển thị (`alphaValue == 0.0`), loại bỏ triệt để hiện tượng giật chuyển hình học từ ngang sang dọc (`640×480` hoặc `16:9` → `9:16`) trên các video quay dọc (như file Sony XAVC-S 4K 10-bit).
+  - Cửa sổ chỉ mở sáng khi khung hình OpenGL đầu tiên đã dựng sẵn, đồng thời tự động triệt tiêu các cập nhật sai lệch tạm thời từ decoder trước khi metadata xoay được tải xong.
 - **Tự động co giãn theo tỷ lệ video thực (Adaptive Aspect Ratio)**:
   - Tự động nhận diện tỷ lệ khung hình thực tế (`9:16`, `4:5` dọc, `1:1` vuông, `16:9`, `21:9` ngang), tính toán theo SAR/DAR và metadata xoay (`90°`/`270°`).
   - Video dọc (Shorts, Reels, TikTok) mở lên khớp khung hình chính xác, **không bị hai viền đen** (black bars).
@@ -74,9 +77,13 @@ UPreviewX là phần mềm mã nguồn mở độc lập và được ký số a
   - **Tạm dừng gần 0% CPU**: Ngắt toàn bộ timer chẩn đoán và polling khi pause, giữ mức CPU ở mức danh nghĩa (< 0.5%).
   - **Nhận diện cửa sổ bị che khuất / thu nhỏ**: Tự động tạm ngưng vẽ khung hình OpenGL khi cửa sổ bị che hoặc thu nhỏ vào Dock, tiết kiệm tối đa pin và GPU.
   - **Thích ứng áp lực bộ nhớ (Memory Pressure)**: Giải phóng demuxer back-cache ngay khi macOS phát tín hiệu thiếu bộ nhớ RAM.
+- **Tích hợp Finder & Quản lý Bản ghi LaunchServices sạch (Clean Open With)**:
+  - Tự động hủy đăng ký các bản build phát triển tạm thời (`dist/UPreviewX.app`) khỏi LaunchServices (`lsregister -u`) trong quá trình `build_app.sh`, `package_distribution.sh` và `release_check.sh`.
+  - Giữ menu **Open With** của macOS luôn gọn gàng, trỏ duy nhất về bản cài đặt chính thức tại `/Applications/UPreviewX.app` (hoặc `~/Applications/UPreviewX.app`), không bị nhân bản (duplicate entries).
 - **Tạo Thumbnail theo nhu cầu (On-Demand Thumbnail Service)**:
-  - Tích hợp `VideoThumbnailService` ưu tiên ảnh bìa embedded artwork và AVFoundation keyframe seek cực nhanh.
+  - Tích hợp `VideoThumbnailService` ưu tiên ảnh bìa embedded artwork và AVFoundation keyframe seek cực nhanh (~30–80 ms).
   - Hỗ trợ giải mã thumbnail dự phòng headless không cần GUI cho các định dạng MKV, WebM, AVI, AV1.
+  - **Bảo vệ tài nguyên nghiêm ngặt (Safe Resource Budget)**: Với các codec máy quay chuyên nghiệp không có giải mã phần cứng trên Intel (như H.264 High 4:2:2 10-bit), giải mã phần mềm đòi hỏi CPU rất cao (~15.7 giây). Bộ tạo thumbnail tự động kích hoạt timeout an toàn 2.5s, hủy tiến trình mpv con, giải phóng bộ nhớ và trả về icon mặc định an toàn thay vì làm đơ máy người dùng.
   - Cung cấp lệnh CLI trích xuất thumbnail siêu nhẹ: `/Applications/UPreviewX.app/Contents/MacOS/UPreviewX --thumbnail video.mkv output.png --size 512`.
 - **Tách biệt Tua nhanh (Shuttle) và Tốc độ phát (Speed Playback)**:
   - **Tua nhanh (Shuttle)**: Nhấn giữ phím `←` hoặc `→` để lướt nhanh mượt mà qua các keyframe; nhả phím sẽ lập tức trả về đúng trạng thái ban đầu (đang tạm dừng tiếp tục tạm dừng, đang phát tiếp tục phát).

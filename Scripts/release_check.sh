@@ -17,15 +17,22 @@ UNZIP_TMP=""
 Q_TMP=""
 
 cleanup() {
+    local lsreg="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
     if [ -n "${MOUNT_DIR}" ] && [ -d "${MOUNT_DIR}" ]; then
+        if [ -x "${lsreg}" ]; then "${lsreg}" -u "${MOUNT_DIR}/UPreviewX.app" 2>/dev/null || true; fi
         hdiutil detach "${MOUNT_DIR}" -quiet 2>/dev/null || true
         rm -rf "${MOUNT_DIR}" 2>/dev/null || true
     fi
     if [ -n "${UNZIP_TMP}" ] && [ -d "${UNZIP_TMP}" ]; then
+        if [ -x "${lsreg}" ]; then "${lsreg}" -u "${UNZIP_TMP}/UPreviewX.app" 2>/dev/null || true; fi
         rm -rf "${UNZIP_TMP}" 2>/dev/null || true
     fi
     if [ -n "${Q_TMP}" ] && [ -d "${Q_TMP}" ]; then
+        if [ -x "${lsreg}" ]; then "${lsreg}" -u "${Q_TMP}/UPreviewX.app" 2>/dev/null || true; fi
         rm -rf "${Q_TMP}" 2>/dev/null || true
+    fi
+    if [ -x "${lsreg}" ]; then
+        "${lsreg}" -u "${APP_DIR}" 2>/dev/null || true
     fi
 }
 trap cleanup EXIT INT TERM

@@ -1,4 +1,5 @@
 import AppKit
+import AVFoundation
 
 /// Custom `NSWindow` that forwards media playback keyboard shortcuts directly to the controller.
 public final class PlayerWindow: NSWindow {
@@ -42,6 +43,8 @@ public final class PlayerWindowController: NSWindowController, NSWindowDelegate,
     private var isProgrammaticWindowResize = false
     private var isFullscreen = false
     private var isControlsHidden = false
+    private var expectedDisplayAspect: CGFloat?
+    private var hasRenderedFirstFrame = false
 
     // Safe Shuttle State
     public enum ShuttleDirection {
@@ -373,24 +376,64 @@ public final class PlayerWindowController: NSWindowController, NSWindowDelegate,
         return NSRect(x: originX, y: originY, width: targetW, height: targetH)
     }
 
-    private func applyAdaptiveWindowSize(_ size: CGSize) {
+    /// Fast pre-flight track metadata inspection (< 20ms) for MP4/MOV/M4V containers.
+    /// Reads track dimensions and affine rotation transform without GOP decoding,
+    /// enabling the window to adopt the exact target aspect ratio before it is ever shown.
+    public static func preflightVideoDisplaySize(for url: URL) -> CGSize? {
+        let ext = url.pathExtension.lowercased()
+        guard ["mp4", "mov", "m4v"].contains(ext) else { return nil }
+        let asset = AVURLAsset(url: url, options: [AVURLAssetPreferPreciseDurationAndTimingKey: false])
+        var displaySize: CGSize?
+        let sema = DispatchSemaphore(value: 0)
+        Task.detached {
+            if let tracks = try? await asset.loadTracks(withMediaType: .video),
+               let track = tracks.first,
+               let natural = try? await track.load(.naturalSize),
+               let transform = try? await track.load(.preferredTransform),
+               natural.width > 0, natural.height > 0 {
+                let applied = natural.applying(transform)
+                let w = abs(applied.width)
+                let h = abs(applied.height)
+                if w > 0 && h > 0 {
+                    displaySize = CGSize(width: w, height: h)
+                }
+            }
+            sema.signal()
+        }
+        _ = sema.wait(timeout: .now() + 0.05)
+        return displaySize
+    }
+
+    private func applyAdaptiveWindowSize(_ size: CGSize, isPreflight: Bool = false) {
         guard size.width > 0 && size.height > 0, let win = window else { return }
+
+        // If pre-flight metadata determined an expected aspect ratio (e.g. portrait 9:16),
+        // reject premature intermediate updates from mpv that have opposite orientation
+        // (e.g. landscape 3840x2160 emitted before mpv has parsed video-params/rotate).
+        if !isPreflight, let expected = expectedDisplayAspect {
+            let currentAspect = size.width / size.height
+            let isExpectedPortrait = expected < 0.95
+            let isCurrentPortrait = currentAspect < 0.95
+            if isExpectedPortrait != isCurrentPortrait {
+                return
+            }
+        }
 
         // Lock window frame aspect ratio (matches fullSizeContentView viewport)
         win.aspectRatio = size
 
         guard !isFullscreen, !userDidManuallyResizeWindow else {
-            revealWindowIfNeeded()
+            if hasRenderedFirstFrame { revealWindowIfNeeded() }
             return
         }
 
         guard UserSettings.shared.fitWindowToAspectRatio else {
-            revealWindowIfNeeded()
+            if hasRenderedFirstFrame { revealWindowIfNeeded() }
             return
         }
 
         guard size != lastAppliedVideoSize else {
-            revealWindowIfNeeded()
+            if hasRenderedFirstFrame { revealWindowIfNeeded() }
             return
         }
         lastAppliedVideoSize = size
@@ -414,7 +457,9 @@ public final class PlayerWindowController: NSWindowController, NSWindowDelegate,
         win.setFrame(targetFrame, display: true, animate: false)
         isProgrammaticWindowResize = false
 
-        revealWindowIfNeeded()
+        if hasRenderedFirstFrame {
+            revealWindowIfNeeded()
+        }
     }
 
     private func revealWindowIfNeeded() {
@@ -431,18 +476,30 @@ public final class PlayerWindowController: NSWindowController, NSWindowDelegate,
         endShuttle(restoreOriginalState: false)
         lastAppliedVideoSize = .zero
         userDidManuallyResizeWindow = false
+        hasRenderedFirstFrame = false
         updateWindowTitle(for: url)
         window?.representedURL = url
         showWindow(nil)
         window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
 
+        // Clear previous video frame so switching files never flashes stale content
+        videoView.videoLayer.setNeedsDisplay()
+
+        // Fast pre-flight track metadata inspection (< 20ms)
+        if let preflight = Self.preflightVideoDisplaySize(for: url) {
+            expectedDisplayAspect = preflight.width / preflight.height
+            applyAdaptiveWindowSize(preflight, isPreflight: true)
+        } else {
+            expectedDisplayAspect = nil
+        }
+
         // Force immediate CGLContext and mpv_render_context creation before loading the file
         videoView.videoLayer.display()
 
-        // Fallback timer to reveal window if an audio-only or broken file produces no video reconfig
+        // Fallback timer (1.2s) only for audio-only, broken, or non-visual files that produce no video frames
         initialRevealTimer?.invalidate()
-        initialRevealTimer = Timer.scheduledTimer(withTimeInterval: 0.18, repeats: false) { [weak self] _ in
+        initialRevealTimer = Timer.scheduledTimer(withTimeInterval: 1.2, repeats: false) { [weak self] _ in
             self?.revealWindowIfNeeded()
         }
 
@@ -1016,7 +1073,7 @@ public final class PlayerWindowController: NSWindowController, NSWindowDelegate,
     }
 
     public func playbackEngine(_ engine: PlaybackEngineProtocol, didUpdateVideoSize size: CGSize) {
-        applyAdaptiveWindowSize(size)
+        applyAdaptiveWindowSize(size, isPreflight: false)
     }
 
     public func playbackEngine(_ engine: PlaybackEngineProtocol, didCompleteSeek latencyMs: Double) {

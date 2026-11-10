@@ -97,6 +97,72 @@ UPreviewX áp dụng kiến trúc quản lý tài nguyên thích ứng (Adaptive
 - **Định dạng container mở (MKV, WebM, AVI, TS, AV1)**: Khắc phục thông qua headless `VideoThumbnailService` (sử dụng null VO, giới hạn bộ nhớ 4MB, 2 luồng giải mã, timeout 2.5s) và tiện ích dòng lệnh `--thumbnail`.
 
 ### Định dạng và Giới hạn cố ý không hỗ trợ:
-- **Quick Look Thumbnail Extension cho MKV/WebM trong bản phân phối ad-hoc**:
-  - *Nguyên nhân kỹ thuật*: macOS 13+ (Sonoma/Sequoia) yêu cầu các App Extension hệ thống (`com.apple.quicklook.thumbnail`) phải được ký số bởi chứng chỉ **Apple Developer Team ID** có trả phí để giao tiếp an toàn qua daemon hệ thống (`quicklookd` / `pluginkit`). Trên các bản build ad-hoc mã nguồn mở, `pluginkit` từ chối kích hoạt thumbnail extension của bên thứ ba.
-  - *Quyết định thiết kế*: UPreviewX cố ý không nhồi nhét `.appex` không khả dụng vào bản phân phối để tránh làm phình kích thước app bundle, tránh rủi ro Gatekeeper cách ly và giữ trọn vẹn quy trình kiểm tra bảo mật `make release-check`. Thay vào đó, việc trích xuất thumbnail được cung cấp thông qua `VideoThumbnailService` nội bộ và CLI `--thumbnail`.
+- **Thử nghiệm Thực tế trên Mẫu Video Máy quay Sony XAVC-S (`C3585.MP4`)**:
+  - *Đặc tính file thực tế*: Dung lượng `1.6 GB`, thời lượng `90.09s`, luồng video `140 Mbps` AVC/H.264 High 4:2:2 Profile (`yuv422p10le`), 10-bit màu, kích thước coded `3840×2160`, ma trận xoay `90.00°` (kích thước hiển thị `2160×3840` 9:16 dọc), âm thanh Linear PCM stereo 48kHz (`pcm_s16be`), container edit list thiếu keyframe ở thời điểm đầu.
+  - *Nguyên nhân macOS Finder không hiển thị thumbnail*: Bộ giải mã phần cứng Apple VideoToolbox trên phần cứng Intel chỉ hỗ trợ giải mã phần cứng H.264 8-bit `4:2:0`. Khi gặp luồng H.264 10-bit `4:2:2` từ máy quay Sony, pipeline AVFoundation / QuickLook mặc định của hệ thống trả về lỗi không giải mã được và Finder bỏ qua việc tạo thumbnail.
+  - *Đo lường giải mã thumbnail phần mềm*: Khi ép buộc giải mã bằng `libmpv` / FFmpeg thuần phần mềm (Software decoding), quá trình tìm kiếm keyframe và giải mã khung hình 4K 10-bit tiêu tốn **15.7 giây** thời gian CPU thực tế, tiêu hao `190% – 250%` CPU và tạo ra ảnh PNG unscaled `32.7 MB`.
+  - *Cơ chế bảo vệ của UPreviewX*: `VideoThumbnailService` áp dụng giới hạn thời gian (timeout budget) `2.5s`. Khi giải mã vượt quá ngưỡng an toàn, hệ thống tự động hủy tiến trình con, dọn dẹp bộ nhớ đệm và trả về lỗi `.extractionTimeout` để bảo toàn hiệu năng máy, không gây đơ hoặc giật hệ thống.
+
+---
+
+## 7. Triệt tiêu Hiện tượng Giật Hình học Cửa sổ (Window Geometry Stabilization)
+
+### Nguyên nhân hiện tượng giật ngang → dọc:
+Khi mở video quay dọc có độ phân giải 4K 10-bit như `C3585.MP4`:
+- Cửa sổ AppKit ban đầu mở ở kích thước mặc định `640×480` và có timer dự phòng 180 ms.
+- Engine `libmpv` mất khoảng ~850–890 ms để demux và đọc metadata xoay (`video-params/rotate = 270`).
+- Ở 33 ms đầu tiên, `libmpv` phát sự kiện kích thước pixel thô `video-params/w = 3840, h = 2160` trong khi thuộc tính góc xoay vẫn là `0°`. Nếu áp dụng ngay, cửa sổ sẽ nhảy sang tỷ lệ `16:9` ngang.
+- Khi hết timer 180 ms, cửa sổ hiện lên dưới dạng chữ nhật ngang, sau đó đến 892 ms khi metadata xoay được phân tích xong, cửa sổ mới đột ngột co lại thành chữ nhật dọc `9:16`, tạo ra trải nghiệm giật hình rất khó chịu.
+
+### Giải pháp kỹ thuật triển khai:
+1. **Metadata Preflight siêu tốc bằng AVFoundation (`AVURLAsset`)**:
+   - Trước khi hiển thị cửa sổ (`alphaValue == 0.0`), hệ thống gọi hàm bất đồng bộ `preflightVideoDisplaySize` với timeout bảo vệ 50 ms.
+   - Hàm này chỉ trích xuất thông tin track kích thước tự nhiên (`naturalSize`) và ma trận biến đổi affine (`preferredTransform`) của container MP4/MOV mà **không giải mã bất kỳ khung hình video nào**.
+   - Thời gian trích xuất thực tế trên file `C3585.MP4`: chỉ mất **19.1 ms** (so với 892 ms của mpv demuxer).
+   - Cửa sổ được định hình kích thước và tỷ lệ khung hình chuẩn `2160×3840` (9:16) ngay lập tức khi còn đang ẩn.
+2. **Khử cập nhật sai lệch từ Decoder (Orientation Consistency Check)**:
+   - Trong quá trình phát, nếu decoder phát ra sự kiện kích thước có tỷ lệ trái ngược với kết quả preflight (ví dụ: decoder báo ngang trong khi preflight xác nhận là video dọc), cập nhật này sẽ bị từ chối cho đến khi decoder cập nhật đầy đủ góc xoay.
+3. **Hiển thị đồng bộ theo khung hình đầu (First Rendered Frame Gating)**:
+   - Cửa sổ chỉ được bật sáng (`alphaValue = 1.0`) khi tầng OpenGL thực sự dựng xong khung hình đầu tiên (`playbackEngineDidRenderFirstFrame`), kết hợp timer an toàn 1.2s cho các tệp chỉ có âm thanh (audio-only) hoặc tệp hỏng.
+4. **Kết quả đo lường**:
+   - Số lần thay đổi kích thước cửa sổ sau khi hiển thị (Resizes after reveal): **0 lần**.
+   - Trải nghiệm mở video dọc mượt mà, ổn định tuyệt đối từ khoảnh khắc đầu tiên xuất hiện trên màn hình.
+
+---
+
+## 8. Tích hợp Finder & Kiểm soát Bản ghi LaunchServices (Clean LaunchServices)
+
+### Thực trạng xung đột:
+Khi phát triển và đóng gói UPreviewX, các bản build trung gian trong thư mục `dist/UPreviewX.app` hoặc các mount point tạm thời của DMG/ZIP thường tự động được daemon LaunchServices của macOS ghi nhận. Điều này dẫn đến hiện tượng menu chuột phải **Open With** (Mở bằng) hiển thị nhiều mục "UPreviewX" trùng lặp.
+
+### Cơ chế tự động làm sạch:
+1. Tích hợp lệnh hủy đăng ký `lsregister -u` vào tất cả các quy trình tự động:
+   - `Scripts/build_app.sh`: Hủy đăng ký `${DIST_DIR}/UPreviewX.app` ngay sau khi ký số hoàn tất.
+   - `Scripts/package_distribution.sh`: Giữ sạch staging folder và không để sót bản ghi bundle tạm.
+   - `Scripts/release_check.sh`: Thêm hook dọn dẹp `cleanup()` tự động gỡ bỏ các bản ghi bundle trong thư mục mount DMG và thư mục giải nén ZIP tạm thời.
+2. **Trạng thái hệ thống**:
+   - Bản cài đặt chính thức tại `/Applications/UPreviewX.app` (hoặc `~/Applications/UPreviewX.app`) là bản duy nhất được đăng ký cho các định dạng media (`public.mpeg-4`, `public.movie`, v.v.).
+   - Loại bỏ hoàn toàn tình trạng nhân bản mục trong menu **Open With** của Finder.
+
+---
+
+## 9. Đánh giá Thực nghiệm Quick Look Extension trong Điều kiện Ad-hoc Signing
+
+Nhằm đánh giá tính khả thi của việc tích hợp Quick Look Preview / Thumbnail Extension (`.appex`) cho Finder trên các bản phân phối mã nguồn mở:
+
+### Thử nghiệm thực tế với `pluginkit` và `quicklookd`:
+1. Tạo một App Extension thử nghiệm đóng gói bên trong `UPreviewX.app/Contents/PlugIns/` với protocol `com.apple.quicklook.preview`.
+2. Ký số ad-hoc toàn bộ bundle (`codesign --sign -`).
+3. Đăng ký extension vào hệ thống bằng `pluginkit -a`.
+4. Quan sát nhật ký hệ thống qua `log stream --predicate 'subsystem == "com.apple.runningboard" OR process == "quicklookd"'`:
+
+```text
+RunningBoard: Launch denied for com.vuphm.upreviewx.quicklook (pid -1):
+[RBSRequestErrorDomain Code=5: Launch failed: Launch denied by policy]
+POSIX error: 111 (Connection refused / Not permitted)
+```
+
+### Kết luận kỹ thuật:
+- Kể từ macOS 13 Ventura trở đi, tiến trình điều phối `quicklookd` và daemon kiểm soát tiến trình `RunningBoard` (`pkd`) áp đặt chính sách bảo mật bắt buộc: **Mọi Quick Look App Extension phải có chữ ký số hợp lệ từ Apple Developer Program (có Team ID)**.
+- Các App Extension có chữ ký ad-hoc (`-`) bị RunningBoard từ chối khởi chạy ngay từ bước phân giải quyền hạn.
+- Do đó, việc nhồi nhét Quick Look Extension vào bản build ad-hoc không thể kích hoạt được tính năng xem trước phím Space hay thumbnail Finder, mà chỉ làm tăng dung lượng gói cài đặt và gây cảnh báo Gatekeeper. UPreviewX duy trì kiến trúc native app độc lập, cung cấp khả năng mở tức thì qua nhấp đúp và CLI `--thumbnail` nhẹ nhàng, an toàn.

@@ -30,8 +30,10 @@ public final class MPVPlaybackEngine: PlaybackEngineProtocol {
     // Geometry state updated via observed properties
     private var codedWidth: Int = 0
     private var codedHeight: Int = 0
-    private var darWidth: Int = 0
-    private var darHeight: Int = 0
+    private var paramDarWidth: Int = 0
+    private var paramDarHeight: Int = 0
+    private var mpvDisplayWidth: Int = 0
+    private var mpvDisplayHeight: Int = 0
     private var rotationDegrees: Int = 0
 
     // Timing & seek coalescing instrumentation
@@ -286,8 +288,10 @@ public final class MPVPlaybackEngine: PlaybackEngineProtocol {
 
         codedWidth = 0
         codedHeight = 0
-        darWidth = 0
-        darHeight = 0
+        paramDarWidth = 0
+        paramDarHeight = 0
+        mpvDisplayWidth = 0
+        mpvDisplayHeight = 0
         rotationDegrees = 0
         videoSize = .zero
 
@@ -811,15 +815,27 @@ public final class MPVPlaybackEngine: PlaybackEngineProtocol {
                 recalculateEffectiveVideoSize()
             }
 
-        case "video-params/dw", "dwidth":
+        case "video-params/dw":
             if let val = extractInt64(property), val > 0 {
-                darWidth = Int(val)
+                paramDarWidth = Int(val)
                 recalculateEffectiveVideoSize()
             }
 
-        case "video-params/dh", "dheight":
+        case "video-params/dh":
             if let val = extractInt64(property), val > 0 {
-                darHeight = Int(val)
+                paramDarHeight = Int(val)
+                recalculateEffectiveVideoSize()
+            }
+
+        case "dwidth":
+            if let val = extractInt64(property), val > 0 {
+                mpvDisplayWidth = Int(val)
+                recalculateEffectiveVideoSize()
+            }
+
+        case "dheight":
+            if let val = extractInt64(property), val > 0 {
+                mpvDisplayHeight = Int(val)
                 recalculateEffectiveVideoSize()
             }
 
@@ -871,13 +887,19 @@ public final class MPVPlaybackEngine: PlaybackEngineProtocol {
     }
 
     private func recalculateEffectiveVideoSize() {
-        let effective = PlaybackDiagnostics.effectiveDisplaySize(
-            codedWidth: codedWidth,
-            codedHeight: codedHeight,
-            darWidth: darWidth,
-            darHeight: darHeight,
-            rotationDegrees: rotationDegrees
-        )
+        let effective: CGSize
+        if mpvDisplayWidth > 0 && mpvDisplayHeight > 0 {
+            // mpv authoritative post-rotation display dimensions
+            effective = CGSize(width: CGFloat(mpvDisplayWidth), height: CGFloat(mpvDisplayHeight))
+        } else {
+            effective = PlaybackDiagnostics.effectiveDisplaySize(
+                codedWidth: codedWidth,
+                codedHeight: codedHeight,
+                darWidth: paramDarWidth,
+                darHeight: paramDarHeight,
+                rotationDegrees: rotationDegrees
+            )
+        }
         guard effective.width > 0 && effective.height > 0 else { return }
 
         diagnostics.width = Int(effective.width)

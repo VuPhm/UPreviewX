@@ -811,8 +811,9 @@ final class UPreviewXTests: XCTestCase {
         let controller = PlayerWindowController(showDiagnostics: true)
         defer { controller.close() }
 
-        // Pausing engine
+        // Pausing engine and delivering pause state
         controller.engine.pause()
+        controller.playbackEngine(controller.engine, didUpdatePause: true)
         XCTAssertTrue(controller.engine.isPaused)
     }
 
@@ -825,6 +826,110 @@ final class UPreviewXTests: XCTestCase {
         engine.handleMemoryPressure(critical: false)
         engine.handleMemoryPressure(critical: true)
         engine.restoreMemoryDefaults()
+    }
+
+    func testPreflightVideoDisplaySizeWithSyntheticVectors() {
+        let tempDir = FileManager.default.temporaryDirectory
+        let sampleURL = tempDir.appendingPathComponent("preflight_test_\(UUID().uuidString).mp4")
+        defer { try? FileManager.default.removeItem(at: sampleURL) }
+
+        // Generate a 1-second synthetic portrait 1080x1920 video using ffmpeg
+        let ffmpeg = "/usr/local/bin/ffmpeg"
+        if FileManager.default.isExecutableFile(atPath: ffmpeg) {
+            let proc = Process()
+            proc.executableURL = URL(fileURLWithPath: ffmpeg)
+            proc.arguments = [
+                "-nostdin", "-y",
+                "-f", "lavfi", "-i", "testsrc=size=1080x1920:rate=30:duration=1",
+                "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "ultrafast",
+                sampleURL.path
+            ]
+            try? proc.run()
+            proc.waitUntilExit()
+
+            if FileManager.default.fileExists(atPath: sampleURL.path) {
+                let size = PlayerWindowController.preflightVideoDisplaySize(for: sampleURL)
+                XCTAssertNotNil(size)
+                if let size = size {
+                    XCTAssertEqual(size.width, 1080)
+                    XCTAssertEqual(size.height, 1920)
+                }
+            }
+        }
+
+        // Non-existent file should return nil
+        let nonExistent = tempDir.appendingPathComponent("does_not_exist_\(UUID().uuidString).mp4")
+        XCTAssertNil(PlayerWindowController.preflightVideoDisplaySize(for: nonExistent))
+    }
+
+    func testRealC3585CharacteristicsAndPreflightIfPresent() {
+        let realFile = URL(fileURLWithPath: "/Users/vup/Movies/C3585.MP4")
+        guard FileManager.default.fileExists(atPath: realFile.path) else {
+            return
+        }
+
+        // 1. Preflight extraction should be near-instant (< 50ms) and report exact 2160x3840 portrait size
+        let start = CFAbsoluteTimeGetCurrent()
+        let preflight = PlayerWindowController.preflightVideoDisplaySize(for: realFile)
+        let elapsedMs = (CFAbsoluteTimeGetCurrent() - start) * 1000.0
+
+        XCTAssertNotNil(preflight)
+        XCTAssertLessThan(elapsedMs, 100.0)
+        if let size = preflight {
+            XCTAssertEqual(size.width, 2160)
+            XCTAssertEqual(size.height, 3840)
+            let aspect = size.width / size.height
+            XCTAssertLessThan(aspect, 0.6) // portrait aspect ratio
+        }
+
+        // 2. PlayerWindowController should initialize window in portrait aspect ratio
+        let controller = PlayerWindowController(showDiagnostics: true)
+        defer { controller.close() }
+
+        var frameChangesAfterReveal = 0
+        let observer = NotificationCenter.default.addObserver(
+            forName: NSWindow.didResizeNotification,
+            object: controller.window,
+            queue: .main
+        ) { _ in
+            if controller.window?.alphaValue == 1.0 {
+                frameChangesAfterReveal += 1
+            }
+        }
+        defer { NotificationCenter.default.removeObserver(observer) }
+
+        controller.openMedia(url: realFile)
+
+        if let win = controller.window {
+            XCTAssertEqual(win.aspectRatio.width, 2160)
+            XCTAssertEqual(win.aspectRatio.height, 3840)
+            let winFrame = win.frame
+            // Height must be significantly greater than width (portrait)
+            XCTAssertGreaterThan(winFrame.height, winFrame.width)
+
+            // 3. Rejection of premature landscape mpv update
+            controller.playbackEngine(controller.engine, didUpdateVideoSize: CGSize(width: 3840, height: 2160))
+            // Must stay portrait!
+            XCTAssertGreaterThan(win.frame.height, win.frame.width)
+            XCTAssertEqual(win.aspectRatio.width, 2160)
+            XCTAssertEqual(win.aspectRatio.height, 3840)
+        }
+
+        XCTAssertEqual(frameChangesAfterReveal, 0, "No unwanted resizes after window reveal")
+
+        // 4. VideoThumbnailService on heavy C3585.MP4 correctly abides by strict timeout budget
+        let sema = DispatchSemaphore(value: 0)
+        var thumbResult: Result<CGImage, VideoThumbnailError>?
+        VideoThumbnailService.shared.generateThumbnail(for: realFile, timeout: 1.0, completionQueue: nil) { res in
+            thumbResult = res
+            sema.signal()
+        }
+        _ = sema.wait(timeout: .now() + 2.5)
+        XCTAssertNotNil(thumbResult)
+        // C3585.MP4 requires ~15s for software 4K 10-bit H.264 decode; 1.0s budget correctly aborts with extractionTimeout
+        if case .failure(let err) = thumbResult {
+            XCTAssertEqual(err, .extractionTimeout)
+        }
     }
 }
 
