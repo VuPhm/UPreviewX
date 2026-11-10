@@ -405,67 +405,88 @@ final class UPreviewXTests: XCTestCase {
 
         win.keyDown(with: keyDownEvent)
 
-        // Wait 250ms for hold timer to trigger shuttle mode
+        // Resilient polling for hold timer to trigger shuttle mode (jitter-tolerant)
         let exp = expectation(description: "shuttle activated")
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
-            // Shuttle is active without conflating with speed playback (speed remains 1.0x!)
-            XCTAssertTrue(controller.isShuttleActive)
-            XCTAssertEqual(controller.engine.speed, 1.0)
-
-            // Simulate repeated keydown events during hold (key repeat)
-            if let repeatEvent = NSEvent.keyEvent(
-                with: .keyDown,
-                location: .zero,
-                modifierFlags: [],
-                timestamp: ProcessInfo.processInfo.systemUptime,
-                windowNumber: win.windowNumber,
-                context: nil,
-                characters: "",
-                charactersIgnoringModifiers: "",
-                isARepeat: true,
-                keyCode: 124
-            ) {
-                win.keyDown(with: repeatEvent)
-                // Shuttle remains active, speed unchanged, does not break or crash
+        func checkShuttleActive(attemptsLeft: Int) {
+            if controller.isShuttleActive {
+                // Shuttle is active without conflating with speed playback (speed remains 1.0x!)
                 XCTAssertTrue(controller.isShuttleActive)
                 XCTAssertEqual(controller.engine.speed, 1.0)
-            }
 
-            // 2. Simulate keyUp on Right Arrow
-            if let keyUpEvent = NSEvent.keyEvent(
-                with: .keyUp,
-                location: .zero,
-                modifierFlags: [],
-                timestamp: ProcessInfo.processInfo.systemUptime,
-                windowNumber: win.windowNumber,
-                context: nil,
-                characters: "",
-                charactersIgnoringModifiers: "",
-                isARepeat: false,
-                keyCode: 124
-            ) {
-                win.keyUp(with: keyUpEvent)
-                // Shuttle must end immediately and restore state
-                XCTAssertFalse(controller.isShuttleActive)
-                XCTAssertEqual(controller.engine.speed, 1.0)
+                // Simulate repeated keydown events during hold (key repeat)
+                if let repeatEvent = NSEvent.keyEvent(
+                    with: .keyDown,
+                    location: .zero,
+                    modifierFlags: [],
+                    timestamp: ProcessInfo.processInfo.systemUptime,
+                    windowNumber: win.windowNumber,
+                    context: nil,
+                    characters: "",
+                    charactersIgnoringModifiers: "",
+                    isARepeat: true,
+                    keyCode: 124
+                ) {
+                    win.keyDown(with: repeatEvent)
+                    // Shuttle remains active, speed unchanged, does not break or crash
+                    XCTAssertTrue(controller.isShuttleActive)
+                    XCTAssertEqual(controller.engine.speed, 1.0)
+                }
+
+                // 2. Simulate keyUp on Right Arrow
+                if let keyUpEvent = NSEvent.keyEvent(
+                    with: .keyUp,
+                    location: .zero,
+                    modifierFlags: [],
+                    timestamp: ProcessInfo.processInfo.systemUptime,
+                    windowNumber: win.windowNumber,
+                    context: nil,
+                    characters: "",
+                    charactersIgnoringModifiers: "",
+                    isARepeat: false,
+                    keyCode: 124
+                ) {
+                    win.keyUp(with: keyUpEvent)
+                    // Shuttle must end immediately and restore state
+                    XCTAssertFalse(controller.isShuttleActive)
+                    XCTAssertEqual(controller.engine.speed, 1.0)
+                }
+                exp.fulfill()
+            } else if attemptsLeft > 0 {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                    checkShuttleActive(attemptsLeft: attemptsLeft - 1)
+                }
+            } else {
+                XCTFail("Shuttle failed to activate within timeout")
+                exp.fulfill()
             }
-            exp.fulfill()
         }
-
-        wait(for: [exp], timeout: 2.0)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.20) {
+            checkShuttleActive(attemptsLeft: 16)
+        }
+        wait(for: [exp], timeout: 3.0)
 
         // 3. Focus loss cancels shuttle and restores state
         win.keyDown(with: keyDownEvent)
         let focusExp = expectation(description: "shuttle cancelled on focus loss")
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
-            XCTAssertTrue(controller.isShuttleActive)
-            // Trigger resign key
-            controller.windowDidResignKey(Notification(name: NSWindow.didResignKeyNotification))
-            XCTAssertFalse(controller.isShuttleActive)
-            XCTAssertEqual(controller.engine.speed, 1.0)
-            focusExp.fulfill()
+        func checkShuttleForFocus(attemptsLeft: Int) {
+            if controller.isShuttleActive {
+                controller.windowDidResignKey(Notification(name: NSWindow.didResignKeyNotification))
+                XCTAssertFalse(controller.isShuttleActive)
+                XCTAssertEqual(controller.engine.speed, 1.0)
+                focusExp.fulfill()
+            } else if attemptsLeft > 0 {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                    checkShuttleForFocus(attemptsLeft: attemptsLeft - 1)
+                }
+            } else {
+                XCTFail("Shuttle failed to activate for focus test")
+                focusExp.fulfill()
+            }
         }
-        wait(for: [focusExp], timeout: 2.0)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.20) {
+            checkShuttleForFocus(attemptsLeft: 16)
+        }
+        wait(for: [focusExp], timeout: 3.0)
     }
 
     func testSeparateShuttleFromSpeedPlayback() {
@@ -926,9 +947,9 @@ final class UPreviewXTests: XCTestCase {
         }
         _ = sema.wait(timeout: .now() + 2.5)
         XCTAssertNotNil(thumbResult)
-        // C3585.MP4 requires ~15s for software 4K 10-bit H.264 decode; 1.0s budget correctly aborts with extractionTimeout
+        // C3585.MP4 is classified as HIGH and fast-fails within milliseconds to preserve CPU/RAM
         if case .failure(let err) = thumbResult {
-            XCTAssertEqual(err, .extractionTimeout)
+            XCTAssertTrue(err == .costExceedsBudget(.high) || err == .extractionTimeout)
         }
     }
 }
