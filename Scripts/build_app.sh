@@ -92,4 +92,10 @@ for dylib in "${FRAMEWORKS_DIR}"/*.dylib; do
 done
 codesign --force --deep --sign - --timestamp=none "${APP_DIR}"
 
+# Unregister dist bundle from LaunchServices so dev/build artifacts never pollute macOS Open With
+LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
+if [ -x "${LSREGISTER}" ]; then
+    "${LSREGISTER}" -u "${APP_DIR}" 2>/dev/null || true
+fi
+
 echo "==> Successfully built standalone app bundle at: ${APP_DIR}"
