@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [ main, "feature/*", "release/*" ]
+    branches: [ main, "release/*" ]
   pull_request:
     branches: [ main ]
 
@@ -13,23 +13,42 @@ concurrency:
 jobs:
   build-and-test:
     name: Build & Test (macOS Intel x86_64)
-    runs-on: macos-13
+    runs-on: macos-15-intel
+    timeout-minutes: 20
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Verify Intel Architecture
+        run: |
+          echo "Host architecture: $(uname -m)"
+          echo "macOS version: $(sw_vers -productVersion)"
+          if [ "$(uname -m)" != "x86_64" ]; then
+            echo "Error: Expected x86_64 architecture on macos-15-intel but found $(uname -m)" >&2
+            exit 1
+          fi
+
       - name: Install dependencies (libmpv via Homebrew)
         run: |
           brew install mpv
+          echo "==> Verifying Homebrew mpv installation..."
+          brew --prefix mpv
+          ls -la "$(brew --prefix mpv)/lib/libmpv"* || true
 
-      - name: Compile application
+      - name: Prepare bundled runtime libraries
+        run: make libs
+
+      - name: Compile application (Release x86_64)
         run: make build
 
-      - name: Run verification test suite
+      - name: Run verification unit test suite
         run: make test
 
-      - name: Package distribution artifacts
+      - name: Package distribution artifacts (DMG, ZIP, SHA256)
         run: make package
 
-      - name: Run release pre-flight check
+      - name: Run release pre-flight checks
         run: make release-check
+
+      - name: Run smoke validation & CLI thumbnail check
+        run: ./Scripts/validate_release.sh --smoke

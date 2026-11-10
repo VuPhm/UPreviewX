@@ -172,6 +172,29 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
                 showDiagnosticsByDefault = true
                 benchmarkTargets.append(URL(fileURLWithPath: args[idx + 1]))
                 idx += 1
+            } else if arg == "--thumbnail" && idx + 2 < args.count {
+                let inputURL = URL(fileURLWithPath: args[idx + 1])
+                let outputURL = URL(fileURLWithPath: args[idx + 2])
+                var targetDim: CGFloat = 512
+                if idx + 4 < args.count && args[idx + 3] == "--size", let dim = Double(args[idx + 4]) {
+                    targetDim = CGFloat(dim)
+                    idx += 4
+                } else {
+                    idx += 2
+                }
+                let res = VideoThumbnailService.shared.generateThumbnailToFile(
+                    inputURL: inputURL,
+                    outputURL: outputURL,
+                    targetSize: CGSize(width: targetDim, height: targetDim)
+                )
+                switch res {
+                case .success(let saved):
+                    print("THUMBNAIL_GENERATED:\(saved.path)")
+                    exit(0)
+                case .failure(let error):
+                    fputs("THUMBNAIL_ERROR:\(error.localizedDescription)\n", stderr)
+                    exit(1)
+                }
             } else if arg == "--benchmark-suite" && idx + 1 < args.count {
                 isBenchmarkMode = true
                 showDiagnosticsByDefault = true
@@ -253,50 +276,69 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
                     // Phase 3: Accurate seek on release
                     controller.engine.seek(to: exactTarget, exact: true)
 
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
                         controller.engine.refreshDiagnostics()
                         let d = controller.engine.diagnostics
                         let winFrame = controller.window?.frame ?? .zero
                         let winAspect = winFrame.height > 0 ? (winFrame.width / winFrame.height) : 0
                         let vidAspect = d.height > 0 ? (Double(d.width) / Double(d.height)) : 0
 
-                        let entry: [String: Any] = [
-                            "file": d.fileName,
-                            "fileSizeMB": round(d.fileSizeMB * 10) / 10,
-                            "container": d.containerFormat,
-                            "codec": d.codecName,
-                            "codecDescription": d.codecDescription,
-                            "pixelFormat": d.pixelFormat,
-                            "hwFormat": d.hwFormat,
-                            "hwdecCurrent": d.hwdecCurrent,
-                            "isHardwareAccelerated": d.isHardwareAccelerated,
-                            "isFastPreviewMode": d.isFastPreviewMode,
-                            "decodePath": d.decodePathSummary,
-                            "activeGPU": d.activeGPU,
-                            "codedResolution": "\(d.rawWidth)×\(d.rawHeight)",
-                            "rotationDegrees": d.rotationDegrees,
-                            "displayResolution": "\(d.width)×\(d.height)",
-                            "videoAspectRatio": round(vidAspect * 1000) / 1000,
-                            "windowSize": "\(Int(winFrame.width))×\(Int(winFrame.height))",
-                            "windowAspectRatio": round(Double(winAspect) * 1000) / 1000,
-                            "videoBitrateMbps": round(d.videoBitrateMbps * 10) / 10,
-                            "nominalFPS": round(d.nominalFPS * 100) / 100,
-                            "effectiveFPS": round((steadyFPS > 0 ? steadyFPS : d.estimatedFPS) * 100) / 100,
-                            "droppedFrames": steadyDrops,
-                            "decoderDroppedFrames": steadyDecDrops,
-                            "avSyncDiffMs": round(d.avSyncDiffMs * 100) / 100,
-                            "coldStartWindowMs": round(coldStartWindowMs * 100) / 100,
-                            "coldLaunchFirstFrameMs": round(coldLaunchFirstFrameMs * 100) / 100,
-                            "engineInitLatencyMs": round(d.engineInitLatencyMs * 100) / 100,
-                            "firstFrameLatencyMs": round(d.firstFrameLatencyMs * 100) / 100,
-                            "seekKeyframeLatencyMs": round(keyframeSeekMs * 100) / 100,
-                            "seekExactLatencyMs": round(d.lastSeekLatencyMs * 100) / 100,
-                            "cpuUsagePercent": round((steadyCPU > 0 ? steadyCPU : d.cpuUsagePercent) * 10) / 10,
-                            "residentMemoryMB": round(d.residentMemoryMB * 10) / 10,
-                            "peakMemoryMB": round(d.peakMemoryMB * 10) / 10
-                        ]
-                        results.append(entry)
-                        runNext(index: index + 1)
+                        // Phase 4: Test steady-state pause CPU and thumbnail generation
+                        controller.engine.pause()
+                        let thumbStart = CFAbsoluteTimeGetCurrent()
+                        var thumbMs: Double = 0
+                        let sema = DispatchSemaphore(value: 0)
+                        VideoThumbnailService.shared.generateThumbnail(for: url, targetSize: CGSize(width: 320, height: 320), completionQueue: nil) { _ in
+                            thumbMs = (CFAbsoluteTimeGetCurrent() - thumbStart) * 1000.0
+                            sema.signal()
+                        }
+                        _ = sema.wait(timeout: .now() + 2.5)
+
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                            controller.engine.refreshDiagnostics()
+                            let pausedDiag = controller.engine.diagnostics
+                            let pausedCPU = pausedDiag.cpuUsagePercent
+
+                            let entry: [String: Any] = [
+                                "file": d.fileName,
+                                "fileSizeMB": round(d.fileSizeMB * 10) / 10,
+                                "container": d.containerFormat,
+                                "codec": d.codecName,
+                                "codecDescription": d.codecDescription,
+                                "pixelFormat": d.pixelFormat,
+                                "hwFormat": d.hwFormat,
+                                "hwdecCurrent": d.hwdecCurrent,
+                                "isHardwareAccelerated": d.isHardwareAccelerated,
+                                "isFastPreviewMode": d.isFastPreviewMode,
+                                "decodePath": d.decodePathSummary,
+                                "activeGPU": d.activeGPU,
+                                "codedResolution": "\(d.rawWidth)×\(d.rawHeight)",
+                                "rotationDegrees": d.rotationDegrees,
+                                "displayResolution": "\(d.width)×\(d.height)",
+                                "videoAspectRatio": round(vidAspect * 1000) / 1000,
+                                "windowSize": "\(Int(winFrame.width))×\(Int(winFrame.height))",
+                                "windowAspectRatio": round(Double(winAspect) * 1000) / 1000,
+                                "videoBitrateMbps": round(d.videoBitrateMbps * 10) / 10,
+                                "nominalFPS": round(d.nominalFPS * 100) / 100,
+                                "effectiveFPS": round((steadyFPS > 0 ? steadyFPS : d.estimatedFPS) * 100) / 100,
+                                "droppedFrames": steadyDrops,
+                                "decoderDroppedFrames": steadyDecDrops,
+                                "avSyncDiffMs": round(d.avSyncDiffMs * 100) / 100,
+                                "coldStartWindowMs": round(coldStartWindowMs * 100) / 100,
+                                "coldLaunchFirstFrameMs": round(coldLaunchFirstFrameMs * 100) / 100,
+                                "engineInitLatencyMs": round(d.engineInitLatencyMs * 100) / 100,
+                                "firstFrameLatencyMs": round(d.firstFrameLatencyMs * 100) / 100,
+                                "seekKeyframeLatencyMs": round(keyframeSeekMs * 100) / 100,
+                                "seekExactLatencyMs": round(d.lastSeekLatencyMs * 100) / 100,
+                                "thumbnailLatencyMs": round(thumbMs * 100) / 100,
+                                "cpuUsagePercent": round((steadyCPU > 0 ? steadyCPU : d.cpuUsagePercent) * 10) / 10,
+                                "pausedCpuPercent": round(pausedCPU * 10) / 10,
+                                "residentMemoryMB": round(d.residentMemoryMB * 10) / 10,
+                                "peakMemoryMB": round(d.peakMemoryMB * 10) / 10
+                            ]
+                            results.append(entry)
+                            runNext(index: index + 1)
+                        }
                     }
                 }
             }

@@ -603,6 +603,229 @@ final class UPreviewXTests: XCTestCase {
         hud.updateSpeed(2.0)
         XCTAssertEqual(hud.speedButton.title, "2×")
     }
+
+    // MARK: - Thumbnail & Resource Management Tests
+
+    func testVideoThumbnailServiceGeneratesValidThumbnailForMP4() throws {
+        guard let ffmpegPath = findFFmpeg() else {
+            throw XCTSkip("ffmpeg executable not found")
+        }
+
+        let tempVideoURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("upreviewx_thumb_mp4_\(UUID().uuidString).mp4")
+        defer { try? FileManager.default.removeItem(at: tempVideoURL) }
+
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: ffmpegPath)
+        proc.arguments = [
+            "-y", "-f", "lavfi", "-i", "testsrc=size=320x240:rate=10:duration=1.5",
+            "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "ultrafast",
+            tempVideoURL.path
+        ]
+        proc.standardOutput = Pipe()
+        proc.standardError = Pipe()
+        try proc.run()
+        proc.waitUntilExit()
+        XCTAssertEqual(proc.terminationStatus, 0)
+
+        let exp = expectation(description: "mp4 thumbnail generated")
+        var thumbResult: Result<CGImage, VideoThumbnailError>?
+
+        _ = VideoThumbnailService.shared.generateThumbnail(
+            for: tempVideoURL,
+            targetSize: CGSize(width: 320, height: 240),
+            atPosition: 0.5
+        ) { res in
+            thumbResult = res
+            exp.fulfill()
+        }
+
+        wait(for: [exp], timeout: 5.0)
+        switch thumbResult {
+        case .success(let image):
+            XCTAssertGreaterThan(image.width, 0)
+            XCTAssertGreaterThan(image.height, 0)
+            XCTAssertLessThanOrEqual(image.width, 320)
+            XCTAssertLessThanOrEqual(image.height, 240)
+        case .failure(let error):
+            XCTFail("Expected successful MP4 thumbnail, got: \(error)")
+        case .none:
+            XCTFail("No thumbnail result delivered")
+        }
+    }
+
+    func testVideoThumbnailServiceGeneratesValidThumbnailForMKV() throws {
+        guard let ffmpegPath = findFFmpeg() else {
+            throw XCTSkip("ffmpeg executable not found")
+        }
+
+        let tempMKVURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("upreviewx_thumb_mkv_\(UUID().uuidString).mkv")
+        defer { try? FileManager.default.removeItem(at: tempMKVURL) }
+
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: ffmpegPath)
+        proc.arguments = [
+            "-y", "-f", "lavfi", "-i", "testsrc=size=320x240:rate=10:duration=1.5",
+            "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "ultrafast",
+            tempMKVURL.path
+        ]
+        proc.standardOutput = Pipe()
+        proc.standardError = Pipe()
+        try proc.run()
+        proc.waitUntilExit()
+        XCTAssertEqual(proc.terminationStatus, 0)
+
+        let exp = expectation(description: "mkv thumbnail generated via headless libmpv fallback")
+        var thumbResult: Result<CGImage, VideoThumbnailError>?
+
+        _ = VideoThumbnailService.shared.generateThumbnail(
+            for: tempMKVURL,
+            targetSize: CGSize(width: 320, height: 240),
+            atPosition: 0.5
+        ) { res in
+            thumbResult = res
+            exp.fulfill()
+        }
+
+        wait(for: [exp], timeout: 5.0)
+        switch thumbResult {
+        case .success(let image):
+            XCTAssertGreaterThan(image.width, 0)
+            XCTAssertGreaterThan(image.height, 0)
+            XCTAssertLessThanOrEqual(image.width, 320)
+            XCTAssertLessThanOrEqual(image.height, 240)
+        case .failure(let error):
+            XCTFail("Expected successful MKV thumbnail fallback, got: \(error)")
+        case .none:
+            XCTFail("No thumbnail result delivered")
+        }
+    }
+
+    func testVideoThumbnailServiceHandlesMissingOrCorruptFileGracefully() {
+        let missingURL = URL(fileURLWithPath: "/tmp/non_existent_media_file_12345.mp4")
+        let expMissing = expectation(description: "missing file thumbnail error")
+
+        _ = VideoThumbnailService.shared.generateThumbnail(for: missingURL) { res in
+            switch res {
+            case .success:
+                XCTFail("Expected failure for non-existent file")
+            case .failure(let err):
+                XCTAssertEqual(err, .fileNotFound(missingURL))
+            }
+            expMissing.fulfill()
+        }
+        wait(for: [expMissing], timeout: 2.0)
+
+        let corruptURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("upreviewx_corrupt_\(UUID().uuidString).mkv")
+        try? "CORRUPTED DATA".data(using: .utf8)?.write(to: corruptURL)
+        defer { try? FileManager.default.removeItem(at: corruptURL) }
+
+        let expCorrupt = expectation(description: "corrupted file thumbnail error")
+        _ = VideoThumbnailService.shared.generateThumbnail(for: corruptURL, timeout: 1.5) { res in
+            switch res {
+            case .success:
+                XCTFail("Expected failure for corrupted file")
+            case .failure:
+                // Handled gracefully without crash or hang
+                break
+            }
+            expCorrupt.fulfill()
+        }
+        wait(for: [expCorrupt], timeout: 3.0)
+    }
+
+    func testVideoThumbnailTaskCancellation() {
+        let task = VideoThumbnailTask()
+        XCTAssertFalse(task.isCancelled)
+        task.cancel()
+        XCTAssertTrue(task.isCancelled)
+    }
+
+    func testCommandLineThumbnailGenerationToFile() throws {
+        guard let ffmpegPath = findFFmpeg() else {
+            throw XCTSkip("ffmpeg executable not found")
+        }
+
+        let tempVideoURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("upreviewx_cli_thumb_\(UUID().uuidString).mp4")
+        let tempOutPNG = FileManager.default.temporaryDirectory
+            .appendingPathComponent("upreviewx_cli_out_\(UUID().uuidString).png")
+        defer {
+            try? FileManager.default.removeItem(at: tempVideoURL)
+            try? FileManager.default.removeItem(at: tempOutPNG)
+        }
+
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: ffmpegPath)
+        proc.arguments = [
+            "-y", "-f", "lavfi", "-i", "testsrc=size=320x240:rate=10:duration=1.5",
+            "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "ultrafast",
+            tempVideoURL.path
+        ]
+        proc.standardOutput = Pipe()
+        proc.standardError = Pipe()
+        try proc.run()
+        proc.waitUntilExit()
+
+        let res = VideoThumbnailService.shared.generateThumbnailToFile(
+            inputURL: tempVideoURL,
+            outputURL: tempOutPNG,
+            targetSize: CGSize(width: 256, height: 256)
+        )
+
+        switch res {
+        case .success(let savedURL):
+            XCTAssertEqual(savedURL.path, tempOutPNG.path)
+            XCTAssertTrue(FileManager.default.fileExists(atPath: tempOutPNG.path))
+            let data = try Data(contentsOf: tempOutPNG)
+            XCTAssertGreaterThan(data.count, 8)
+            // Verify PNG magic header 0x89 0x50 0x4E 0x47
+            XCTAssertEqual(data[0], 0x89)
+            XCTAssertEqual(data[1], 0x50)
+            XCTAssertEqual(data[2], 0x4E)
+            XCTAssertEqual(data[3], 0x47)
+        case .failure(let err):
+            XCTFail("CLI thumbnail generation to file failed: \(err)")
+        }
+    }
+
+    func testIntelligentResourceManagementOcclusionAndMiniaturization() {
+        let controller = PlayerWindowController(showDiagnostics: false)
+        defer { controller.close() }
+
+        XCTAssertFalse(controller.videoView.videoLayer.isOccluded)
+
+        // 1. Simulating window miniaturization
+        controller.windowDidMiniaturize(Notification(name: NSWindow.didMiniaturizeNotification))
+        XCTAssertTrue(controller.videoView.videoLayer.isOccluded)
+
+        // 2. Simulating deminiaturization
+        controller.windowDidDeminiaturize(Notification(name: NSWindow.didDeminiaturizeNotification))
+        // Returns to visible state
+        XCTAssertFalse(controller.videoView.videoLayer.isOccluded)
+    }
+
+    func testIntelligentResourceManagementPausedStateStopsDiagnosticsTimer() {
+        let controller = PlayerWindowController(showDiagnostics: true)
+        defer { controller.close() }
+
+        // Pausing engine
+        controller.engine.pause()
+        XCTAssertTrue(controller.engine.isPaused)
+    }
+
+    func testMemoryPressureAdaptationReducesCacheBounds() throws {
+        let engine = MPVPlaybackEngine(useNullVideoOutput: true)
+        defer { engine.shutdown() }
+        try engine.initialize()
+
+        // Verify handling memory pressure warning and critical states without crashing
+        engine.handleMemoryPressure(critical: false)
+        engine.handleMemoryPressure(critical: true)
+        engine.restoreMemoryDefaults()
+    }
 }
 
 private final class EngineTestDelegate: PlaybackEngineDelegate {

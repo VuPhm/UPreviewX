@@ -12,6 +12,24 @@ PKG_NAME="UPreviewX-v${VERSION}-macos-${ARCH}"
 DMG_FILE="${DIST_DIR}/${PKG_NAME}.dmg"
 ZIP_FILE="${DIST_DIR}/${PKG_NAME}.zip"
 
+MOUNT_DIR=""
+UNZIP_TMP=""
+Q_TMP=""
+
+cleanup() {
+    if [ -n "${MOUNT_DIR}" ] && [ -d "${MOUNT_DIR}" ]; then
+        hdiutil detach "${MOUNT_DIR}" -quiet 2>/dev/null || true
+        rm -rf "${MOUNT_DIR}" 2>/dev/null || true
+    fi
+    if [ -n "${UNZIP_TMP}" ] && [ -d "${UNZIP_TMP}" ]; then
+        rm -rf "${UNZIP_TMP}" 2>/dev/null || true
+    fi
+    if [ -n "${Q_TMP}" ] && [ -d "${Q_TMP}" ]; then
+        rm -rf "${Q_TMP}" 2>/dev/null || true
+    fi
+}
+trap cleanup EXIT INT TERM
+
 ERRORS=0
 
 log_pass() {

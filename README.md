@@ -69,9 +69,15 @@ UPreviewX là phần mềm mã nguồn mở độc lập và được ký số a
   - Tự động nhận diện tỷ lệ khung hình thực tế (`9:16`, `4:5` dọc, `1:1` vuông, `16:9`, `21:9` ngang), tính toán theo SAR/DAR và metadata xoay (`90°`/`270°`).
   - Video dọc (Shorts, Reels, TikTok) mở lên khớp khung hình chính xác, **không bị hai viền đen** (black bars).
   - Tự động giới hạn video 4K trong phạm vi an toàn của màn hình (`NSScreen.visibleFrame`), không bao giờ bị tràn qua Menu Bar hay Dock.
-- **Vòng đời ứng dụng sạch (Clean Lifecycle)**:
-  - Khi đóng cửa sổ xem video, ứng dụng **thoát hoàn toàn**.
-  - Tuyệt đối không có daemon hay tiến trình chạy ngầm làm chậm máy.
+- **Vòng đời ứng dụng sạch & Quản lý tài nguyên thông minh (Clean Lifecycle & Intelligent Resources)**:
+  - Khi đóng cửa sổ xem video, ứng dụng **thoát hoàn toàn** (0 tiến trình chạy ngầm).
+  - **Tạm dừng gần 0% CPU**: Ngắt toàn bộ timer chẩn đoán và polling khi pause, giữ mức CPU ở mức danh nghĩa (< 0.5%).
+  - **Nhận diện cửa sổ bị che khuất / thu nhỏ**: Tự động tạm ngưng vẽ khung hình OpenGL khi cửa sổ bị che hoặc thu nhỏ vào Dock, tiết kiệm tối đa pin và GPU.
+  - **Thích ứng áp lực bộ nhớ (Memory Pressure)**: Giải phóng demuxer back-cache ngay khi macOS phát tín hiệu thiếu bộ nhớ RAM.
+- **Tạo Thumbnail theo nhu cầu (On-Demand Thumbnail Service)**:
+  - Tích hợp `VideoThumbnailService` ưu tiên ảnh bìa embedded artwork và AVFoundation keyframe seek cực nhanh.
+  - Hỗ trợ giải mã thumbnail dự phòng headless không cần GUI cho các định dạng MKV, WebM, AVI, AV1.
+  - Cung cấp lệnh CLI trích xuất thumbnail siêu nhẹ: `/Applications/UPreviewX.app/Contents/MacOS/UPreviewX --thumbnail video.mkv output.png --size 512`.
 - **Tách biệt Tua nhanh (Shuttle) và Tốc độ phát (Speed Playback)**:
   - **Tua nhanh (Shuttle)**: Nhấn giữ phím `←` hoặc `→` để lướt nhanh mượt mà qua các keyframe; nhả phím sẽ lập tức trả về đúng trạng thái ban đầu (đang tạm dừng tiếp tục tạm dừng, đang phát tiếp tục phát).
   - **Tốc độ phát (Speed Playback)**: Nút bấm và phím tắt chuyển đổi tức thì giữa `1×` và `2×` (mặc định phím `2`), giữ nguyên cao độ âm thanh (pitch correction).

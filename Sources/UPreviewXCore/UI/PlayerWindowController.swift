@@ -76,6 +76,7 @@ public final class PlayerWindowController: NSWindowController, NSWindowDelegate,
     private let toastLabel = NSTextField(labelWithString: "")
     private var toastDismissTimer: Timer?
     private var toastActionURL: URL?
+    private var memoryPressureSource: DispatchSourceMemoryPressure?
 
     public init(showDiagnostics: Bool = false) {
         let playbackEngine = MPVPlaybackEngine()
@@ -115,6 +116,7 @@ public final class PlayerWindowController: NSWindowController, NSWindowDelegate,
         playbackEngine.delegate = self
 
         setupUI(in: win, showDiagnostics: showDiagnostics)
+        setupMemoryPressureMonitoring()
         try? playbackEngine.initialize()
     }
 
@@ -298,6 +300,18 @@ public final class PlayerWindowController: NSWindowController, NSWindowDelegate,
             startDiagnosticsTimer()
         }
         resetAutoHideTimer()
+    }
+
+    private func setupMemoryPressureMonitoring() {
+        let source = DispatchSource.makeMemoryPressureSource(eventMask: [.warning, .critical], queue: .main)
+        source.setEventHandler { [weak self] in
+            guard let self = self else { return }
+            let event = source.data
+            let isCritical = event.contains(.critical)
+            self.engine.handleMemoryPressure(critical: isCritical)
+        }
+        source.resume()
+        self.memoryPressureSource = source
     }
 
     private func installMouseTracking(on view: NSView) {
@@ -900,6 +914,7 @@ public final class PlayerWindowController: NSWindowController, NSWindowDelegate,
     private func showControlsImmediately() {
         if isControlsHidden {
             isControlsHidden = false
+            hudView.updatePosition(engine.position, duration: engine.duration)
             NSAnimationContext.runAnimationGroup { ctx in
                 ctx.duration = 0.15
                 hudView.animator().alphaValue = 1.0
@@ -944,6 +959,11 @@ public final class PlayerWindowController: NSWindowController, NSWindowDelegate,
 
     private func startDiagnosticsTimer() {
         stopDiagnosticsTimer()
+        // When paused or occluded, suppress recurring diagnostics polling to maintain ~0% idle CPU
+        guard !engine.isPaused, (window?.occlusionState.contains(.visible) != false) else {
+            engine.refreshDiagnostics()
+            return
+        }
         diagnosticsTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
             self?.engine.refreshDiagnostics()
         }
@@ -971,6 +991,8 @@ public final class PlayerWindowController: NSWindowController, NSWindowDelegate,
     }
 
     public func playbackEngine(_ engine: PlaybackEngineProtocol, didUpdatePosition position: Double, duration: Double) {
+        // Event-driven throttling: do not perform layout & string formatting when HUD is hidden
+        guard !isControlsHidden else { return }
         hudView.updatePosition(position, duration: duration)
     }
 
@@ -978,8 +1000,14 @@ public final class PlayerWindowController: NSWindowController, NSWindowDelegate,
         hudView.updatePauseState(isPaused: isPaused)
         if isPaused {
             showControlsImmediately()
+            // Stop recurring diagnostics timer while paused so idle CPU stabilizes near 0.0%
+            stopDiagnosticsTimer()
+            engine.refreshDiagnostics()
         } else {
             resetAutoHideTimer()
+            if !diagnosticsView.isHidden && (window?.occlusionState.contains(.visible) != false) {
+                startDiagnosticsTimer()
+            }
         }
     }
 
@@ -1072,8 +1100,35 @@ public final class PlayerWindowController: NSWindowController, NSWindowDelegate,
         hudView.updateFullscreenState(isFullscreen: false)
     }
 
+    public func windowDidChangeOcclusionState(_ notification: Notification) {
+        guard let win = window else { return }
+        let isVisible = win.occlusionState.contains(.visible)
+        handleVisibilityStateChange(isVisible: isVisible)
+    }
+
+    public func windowDidMiniaturize(_ notification: Notification) {
+        handleVisibilityStateChange(isVisible: false)
+    }
+
+    public func windowDidDeminiaturize(_ notification: Notification) {
+        handleVisibilityStateChange(isVisible: true)
+    }
+
+    private func handleVisibilityStateChange(isVisible: Bool) {
+        videoView.videoLayer.isOccluded = !isVisible
+        if !isVisible {
+            stopDiagnosticsTimer()
+        } else {
+            if !diagnosticsView.isHidden && !engine.isPaused {
+                startDiagnosticsTimer()
+            }
+        }
+    }
+
     public func windowWillClose(_ notification: Notification) {
         endShuttle(restoreOriginalState: false)
+        memoryPressureSource?.cancel()
+        memoryPressureSource = nil
         toastDismissTimer?.invalidate()
         toastDismissTimer = nil
         NotificationCenter.default.removeObserver(self)

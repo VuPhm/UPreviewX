@@ -32,7 +32,23 @@ if [ -f "${SOURCE_FW_DIR}/libmpv.2.dylib" ]; then
 elif command -v brew >/dev/null 2>&1 && brew --prefix mpv >/dev/null 2>&1; then
     MPV_PREFIX="$(brew --prefix mpv)"
     echo "Bundling libmpv runtime libraries from Homebrew (${MPV_PREFIX})..."
-    python3 - "${MPV_PREFIX}/lib/libmpv.2.dylib" "${VENDOR_LIB_DIR}" <<'PYEOF'
+    MPV_DYLIB=""
+    if [ -f "${MPV_PREFIX}/lib/libmpv.2.dylib" ]; then
+        MPV_DYLIB="${MPV_PREFIX}/lib/libmpv.2.dylib"
+    elif [ -f "${MPV_PREFIX}/lib/libmpv.dylib" ]; then
+        MPV_DYLIB="${MPV_PREFIX}/lib/libmpv.dylib"
+    elif [ -f "/usr/local/lib/libmpv.2.dylib" ]; then
+        MPV_DYLIB="/usr/local/lib/libmpv.2.dylib"
+    elif [ -f "/usr/local/lib/libmpv.dylib" ]; then
+        MPV_DYLIB="/usr/local/lib/libmpv.dylib"
+    fi
+
+    if [ -z "${MPV_DYLIB}" ]; then
+        echo "Error: Could not find libmpv.2.dylib or libmpv.dylib in Homebrew prefix: ${MPV_PREFIX}" >&2
+        exit 1
+    fi
+
+    python3 - "${MPV_DYLIB}" "${VENDOR_LIB_DIR}" <<'PYEOF'
 import os, shutil, subprocess, sys
 
 root_dylib = os.path.realpath(sys.argv[1])
@@ -64,6 +80,14 @@ while queue:
                 dep_real = os.path.realpath(os.path.join(brew_lib, "lib", dep_base))
             if os.path.exists(dep_real) and dep_base not in visited:
                 queue.append((dep_base, dep_real))
+
+    # Strip any leaked development/Cellar LC_RPATH entries
+    rpath_out = subprocess.check_output(["otool", "-l", target_path], text=True)
+    for line in rpath_out.splitlines():
+        l_str = line.strip()
+        if l_str.startswith("path /") and ("cellar" in l_str.lower() or "homebrew" in l_str.lower() or "/usr/local" in l_str or "documents/agy" in l_str.lower()):
+            leaked_rpath = l_str.split("path ")[1].split(" (offset")[0].strip()
+            subprocess.run(["install_name_tool", "-delete_rpath", leaked_rpath, target_path], check=False)
 PYEOF
 else
     echo "Error: Could not find libmpv.2.dylib in ${SOURCE_FW_DIR} or Homebrew." >&2
