@@ -61,7 +61,28 @@ fi
     -c:v prores -profile:v 2 -pix_fmt yuv422p10le \
     "${TEST_DIR}/06_prores_1080p.mov" >/dev/null 2>&1
 
-# 7. Corrupted / unsupported media file
+# 7. Matroska MKV H.264
+"${FFMPEG}" -nostdin -y -f lavfi -i "testsrc=size=1920x1080:rate=30:duration=2" \
+    -c:v libx264 -pix_fmt yuv420p -preset ultrafast \
+    "${TEST_DIR}/07_mkv_landscape_1080p.mkv" >/dev/null 2>&1
+
+# 8. WebM VP9 (or VP8 fallback)
+if "${FFMPEG}" -encoders 2>/dev/null | grep -q "libvpx-vp9"; then
+    "${FFMPEG}" -nostdin -y -f lavfi -i "testsrc=size=1280x720:rate=30:duration=2" \
+        -c:v libvpx-vp9 -pix_fmt yuv420p \
+        "${TEST_DIR}/08_webm_landscape_720p.webm" >/dev/null 2>&1
+elif "${FFMPEG}" -encoders 2>/dev/null | grep -q "libvpx"; then
+    "${FFMPEG}" -nostdin -y -f lavfi -i "testsrc=size=1280x720:rate=30:duration=2" \
+        -c:v libvpx -pix_fmt yuv420p \
+        "${TEST_DIR}/08_webm_landscape_720p.webm" >/dev/null 2>&1
+fi
+
+# 9. 4K UHD H.264 (3840x2160)
+"${FFMPEG}" -nostdin -y -f lavfi -i "testsrc=size=3840x2160:rate=30:duration=2" \
+    -c:v libx264 -pix_fmt yuv420p -preset ultrafast \
+    "${TEST_DIR}/09_4k_landscape_3840x2160.mp4" >/dev/null 2>&1
+
+# 10. Corrupted / unsupported media file
 echo "THIS IS CORRUPTED MEDIA DATA" > "${TEST_DIR}/99_corrupt_payload.mp4"
 
 echo "==> Generated $(ls -1 "${TEST_DIR}" | wc -l | tr -d ' ') test vectors."
@@ -108,13 +129,45 @@ for item in data:
     cold_first = item.get("coldLaunchFirstFrameMs", 0)
     first_frame = item.get("firstFrameLatencyMs", 0)
     seek_exact = item.get("seekExactLatencyMs", 0)
+    thumb_ms = item.get("thumbnailLatencyMs", 0)
     cpu = item.get("cpuUsagePercent", 0)
+    paused_cpu = item.get("pausedCpuPercent", 0)
     rss = item.get("residentMemoryMB", 0)
-    hwdec = item.get("hwdec", "none")
-    print(f"  • {name} [{codec}|{hwdec}]: firstFrame={first_frame:.1f}ms, seek={seek_exact:.1f}ms, fps={fps:.1f}, cpu={cpu:.1f}%, rss={rss:.1f}MB")
+    hwdec = item.get("hwdecCurrent", "none")
+    print(f"  • {name} [{codec}|{hwdec}]: firstFrame={first_frame:.1f}ms, seek={seek_exact:.1f}ms, fps={fps:.1f}, playCPU={cpu:.1f}%, pausedCPU={paused_cpu:.1f}%, thumb={thumb_ms:.1f}ms, rss={rss:.1f}MB")
 
 print("\nValidation across multimedia codecs and playback metrics complete.")
 PYEOF
+
+# Test CLI on-demand thumbnail generation (no GUI launched, instant return)
+echo "==> Testing on-demand CLI thumbnail extraction..."
+CLI_THUMB_OUT="${TEST_DIR}/cli_thumb_test.png"
+if "${BIN_PATH}" --thumbnail "${TEST_DIR}/01_h264_landscape_1080p.mp4" "${CLI_THUMB_OUT}" --size 256 >/dev/null 2>&1; then
+    if [ -s "${CLI_THUMB_OUT}" ]; then
+        echo "  [PASS] CLI thumbnail generated successfully for MP4 ($(wc -c < "${CLI_THUMB_OUT}" | tr -d ' ') bytes)."
+    else
+        echo "  [FAIL] CLI thumbnail file is empty for MP4!" >&2
+        exit 1
+    fi
+else
+    echo "  [FAIL] CLI thumbnail command failed for MP4!" >&2
+    exit 1
+fi
+
+if [ -f "${TEST_DIR}/07_mkv_landscape_1080p.mkv" ]; then
+    CLI_MKV_THUMB="${TEST_DIR}/cli_mkv_thumb.png"
+    if "${BIN_PATH}" --thumbnail "${TEST_DIR}/07_mkv_landscape_1080p.mkv" "${CLI_MKV_THUMB}" --size 256 >/dev/null 2>&1; then
+        if [ -s "${CLI_MKV_THUMB}" ]; then
+            echo "  [PASS] CLI thumbnail generated successfully for MKV fallback ($(wc -c < "${CLI_MKV_THUMB}" | tr -d ' ') bytes)."
+        else
+            echo "  [FAIL] CLI thumbnail file is empty for MKV!" >&2
+            exit 1
+        fi
+    else
+        echo "  [FAIL] CLI thumbnail command failed for MKV!" >&2
+        exit 1
+    fi
+fi
 
 rm -rf "${TEST_DIR}" "${BENCH_OUT}"
 

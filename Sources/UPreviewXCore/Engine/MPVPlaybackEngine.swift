@@ -490,6 +490,45 @@ public final class MPVPlaybackEngine: PlaybackEngineProtocol {
         }
     }
 
+    /// Adapts cache bounds dynamically in response to macOS system memory pressure events.
+    public func handleMemoryPressure(critical: Bool) {
+        stateLock.lock()
+        guard let handle = mpvHandle, !isShuttingDown else {
+            stateLock.unlock()
+            return
+        }
+        stateLock.unlock()
+
+        if critical {
+            // Drop back-cache and restrict forward buffer aggressively (16 MiB)
+            var zeroBytes: Int64 = 0
+            mpv_set_property_async(handle, 0, "demuxer-max-back-bytes", MPV_FORMAT_INT64, &zeroBytes)
+            var lowBytes: Int64 = 16777216
+            mpv_set_property_async(handle, 0, "demuxer-max-bytes", MPV_FORMAT_INT64, &lowBytes)
+        } else {
+            // Warning: release back-cache buffer, preserve 32 MiB forward buffer
+            var zeroBytes: Int64 = 0
+            mpv_set_property_async(handle, 0, "demuxer-max-back-bytes", MPV_FORMAT_INT64, &zeroBytes)
+            var medBytes: Int64 = 33554432
+            mpv_set_property_async(handle, 0, "demuxer-max-bytes", MPV_FORMAT_INT64, &medBytes)
+        }
+    }
+
+    /// Restores standard demuxer cache bounds when system memory pressure normalizes.
+    public func restoreMemoryDefaults() {
+        stateLock.lock()
+        guard let handle = mpvHandle, !isShuttingDown else {
+            stateLock.unlock()
+            return
+        }
+        stateLock.unlock()
+
+        var defaultForward: Int64 = 67108864      // 64 MiB
+        var defaultBack: Int64 = 33554432         // 32 MiB
+        mpv_set_property_async(handle, 0, "demuxer-max-bytes", MPV_FORMAT_INT64, &defaultForward)
+        mpv_set_property_async(handle, 0, "demuxer-max-back-bytes", MPV_FORMAT_INT64, &defaultBack)
+    }
+
     public func shutdown() {
         stateLock.lock()
         if isShuttingDown {

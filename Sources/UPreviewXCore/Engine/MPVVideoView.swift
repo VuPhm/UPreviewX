@@ -17,6 +17,18 @@ public final class MPVVideoLayer: CAOpenGLLayer {
     private let updateLock = NSLock()
     private var isUpdateScheduled = false
 
+    /// When true (e.g. window occluded or minimized), frame rendering is suspended to save CPU/GPU.
+    public var isOccluded: Bool = false {
+        didSet {
+            if !isOccluded && oldValue {
+                // Window returned to visible state: force immediate display of current video frame
+                DispatchQueue.main.async { [weak self] in
+                    self?.setNeedsDisplay()
+                }
+            }
+        }
+    }
+
     public override init() {
         super.init()
         configureLayer()
@@ -82,7 +94,7 @@ public final class MPVVideoLayer: CAOpenGLLayer {
     }
 
     public override func canDraw(inCGLContext ctx: CGLContextObj, pixelFormat pf: CGLPixelFormatObj, forLayerTime t: CFTimeInterval, displayTime ts: UnsafePointer<CVTimeStamp>?) -> Bool {
-        return engine != nil && bounds.width > 1 && bounds.height > 1
+        return !isOccluded && engine != nil && bounds.width > 1 && bounds.height > 1
     }
 
     public override func draw(inCGLContext ctx: CGLContextObj, pixelFormat pf: CGLPixelFormatObj, forLayerTime t: CFTimeInterval, displayTime ts: UnsafePointer<CVTimeStamp>?) {
@@ -117,7 +129,7 @@ public final class MPVVideoLayer: CAOpenGLLayer {
             self.isUpdateScheduled = false
             self.updateLock.unlock()
 
-            guard let engine = self.engine else { return }
+            guard !self.isOccluded, let engine = self.engine else { return }
             let flags = engine.pollRenderUpdateFlags()
             if (flags & UInt64(MPV_RENDER_UPDATE_FRAME.rawValue)) != 0 {
                 self.display()
