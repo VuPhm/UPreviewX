@@ -420,7 +420,9 @@ public final class PlayerWindowController: NSWindowController, NSWindowDelegate,
         }
 
         // Lock window frame aspect ratio (matches fullSizeContentView viewport)
-        win.aspectRatio = size
+        if win.aspectRatio != size {
+            win.aspectRatio = size
+        }
 
         guard !isFullscreen, !userDidManuallyResizeWindow else {
             if hasRenderedFirstFrame { revealWindowIfNeeded() }
@@ -453,6 +455,28 @@ public final class PlayerWindowController: NSWindowController, NSWindowDelegate,
             targetFrame = Self.calculateTargetWindowFrame(for: size, in: screenVisible)
         }
 
+        // Avoid sub-pixel / negligible resizing jerk:
+        // If window is already at target frame within 1.0 point tolerance, skip setFrame entirely
+        let currentFrame = win.frame
+        let deltaW = abs(targetFrame.width - currentFrame.width)
+        let deltaH = abs(targetFrame.height - currentFrame.height)
+        let deltaX = abs(targetFrame.origin.x - currentFrame.origin.x)
+        let deltaY = abs(targetFrame.origin.y - currentFrame.origin.y)
+
+        if deltaW < 1.0 && deltaH < 1.0 && deltaX < 1.0 && deltaY < 1.0 {
+            if hasRenderedFirstFrame { revealWindowIfNeeded() }
+            return
+        }
+
+        // If window is already revealed to the user, suppress minor aspect ratio twitches (< 1.5%)
+        if win.alphaValue == 1.0 && currentFrame.height > 0 {
+            let currentAspect = currentFrame.width / currentFrame.height
+            let newAspect = size.width / size.height
+            if abs(newAspect - currentAspect) / currentAspect < 0.015 {
+                return
+            }
+        }
+
         isProgrammaticWindowResize = true
         win.setFrame(targetFrame, display: true, animate: false)
         isProgrammaticWindowResize = false
@@ -479,20 +503,23 @@ public final class PlayerWindowController: NSWindowController, NSWindowDelegate,
         hasRenderedFirstFrame = false
         updateWindowTitle(for: url)
         window?.representedURL = url
-        showWindow(nil)
-        window?.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
 
         // Clear previous video frame so switching files never flashes stale content
         videoView.videoLayer.setNeedsDisplay()
 
-        // Fast pre-flight track metadata inspection (< 20ms)
+        // 1. Fast pre-flight track metadata inspection (< 20ms)
+        // Shape the window to exact display dimensions in memory BEFORE ordering front in WindowServer
         if let preflight = Self.preflightVideoDisplaySize(for: url) {
             expectedDisplayAspect = preflight.width / preflight.height
             applyAdaptiveWindowSize(preflight, isPreflight: true)
         } else {
             expectedDisplayAspect = nil
         }
+
+        // 2. Order front and activate window (already sized to target aspect ratio)
+        showWindow(nil)
+        window?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
 
         // Force immediate CGLContext and mpv_render_context creation before loading the file
         videoView.videoLayer.display()
@@ -1042,6 +1069,7 @@ public final class PlayerWindowController: NSWindowController, NSWindowDelegate,
     }
 
     public func playbackEngineDidRenderFirstFrame(_ engine: PlaybackEngineProtocol, latencyMs: Double) {
+        hasRenderedFirstFrame = true
         revealWindowIfNeeded()
         diagnosticsView.update(with: engine.diagnostics)
         onFirstFrameRendered?(engine.diagnostics)
@@ -1055,6 +1083,7 @@ public final class PlayerWindowController: NSWindowController, NSWindowDelegate,
 
     public func playbackEngine(_ engine: PlaybackEngineProtocol, didUpdatePause isPaused: Bool) {
         hudView.updatePauseState(isPaused: isPaused)
+        VideoThumbnailService.shared.setPlaybackActive(!isPaused)
         if isPaused {
             showControlsImmediately()
             // Stop recurring diagnostics timer while paused so idle CPU stabilizes near 0.0%
@@ -1182,6 +1211,11 @@ public final class PlayerWindowController: NSWindowController, NSWindowDelegate,
         }
     }
 
+    public override func close() {
+        VideoThumbnailService.shared.setPlaybackActive(false)
+        super.close()
+    }
+
     public func windowWillClose(_ notification: Notification) {
         endShuttle(restoreOriginalState: false)
         memoryPressureSource?.cancel()
@@ -1194,6 +1228,7 @@ public final class PlayerWindowController: NSWindowController, NSWindowDelegate,
         hideControlsTimer?.invalidate()
         hideControlsTimer = nil
         stopDiagnosticsTimer()
+        VideoThumbnailService.shared.setPlaybackActive(false)
         engine.shutdown()
         onWindowWillClose?(self)
     }

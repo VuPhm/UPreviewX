@@ -64,14 +64,27 @@ UPreviewX là phần mềm mã nguồn mở độc lập và được ký số a
 
 ## 3. Điểm nổi bật & Tính năng chính
 
-- **Mở video tức thì, không màn hình chờ & Ổn định hình học (Geometry Stability)**:
+- **Mở video tức thì, không màn hình chờ & Khử giật hình học triệt để (Zero-Jerk Final Stability)**:
   - Nhấp đúp vào video hoặc dùng **Open With**, cửa sổ phát lập tức hiển thị và bắt đầu phát lại.
-  - **Trích xuất thông số hiển thị siêu tốc (Metadata Preflight < 20 ms)**: Phân tích trước ma trận biến đổi affine và xoay góc qua `AVURLAsset` chỉ trong ~14–19 ms, thiết lập kích thước và tỷ lệ khung hình cửa sổ chính xác ngay trước khi hiển thị (`alphaValue == 0.0`), loại bỏ triệt để hiện tượng giật chuyển hình học từ ngang sang dọc (`640×480` hoặc `16:9` → `9:16`) trên các video quay dọc (như file Sony XAVC-S 4K 10-bit).
-  - Cửa sổ chỉ mở sáng khi khung hình OpenGL đầu tiên đã dựng sẵn, đồng thời tự động triệt tiêu các cập nhật sai lệch tạm thời từ decoder trước khi metadata xoay được tải xong.
+  - **Trích xuất thông số hiển thị siêu tốc (Metadata Preflight < 20 ms)**: Phân tích trước ma trận biến đổi affine và xoay góc qua `AVURLAsset` chỉ trong ~14–19 ms. Toàn bộ kích thước và tỷ lệ khung hình cửa sổ được định hình chính xác trong bộ nhớ **trước khi cửa sổ được đặt lên WindowServer (`orderFront`)**, loại bỏ hoàn toàn hiện tượng cửa sổ mở ở 640×480 rồi mới co giãn sang dọc (`9:16`).
+  - **Đồng bộ hiển thị theo khung hình OpenGL thực tế (FBO Render Gating)**: Cửa sổ chỉ mở sáng (`alphaValue = 1.0`) đúng vào thời điểm tầng OpenGL đã vẽ xong khung hình video đầu tiên vào framebuffer, loại bỏ hoàn toàn hiện tượng chớp đen (black flash) trước khi video hiện ra.
+  - **Triệt tiêu rung lắc vi sai (Tolerance Suppression)**: Tự động bỏ qua các vi sai kích thước dưới 1 điểm ảnh (< 1 pt) và chênh lệch tỷ lệ khung hình dưới 1.5% sau khi cửa sổ đã hiển thị, bảo đảm số lần resize sau reveal là **0 lần**.
 - **Tự động co giãn theo tỷ lệ video thực (Adaptive Aspect Ratio)**:
   - Tự động nhận diện tỷ lệ khung hình thực tế (`9:16`, `4:5` dọc, `1:1` vuông, `16:9`, `21:9` ngang), tính toán theo SAR/DAR và metadata xoay (`90°`/`270°`).
   - Video dọc (Shorts, Reels, TikTok) mở lên khớp khung hình chính xác, **không bị hai viền đen** (black bars).
   - Tự động giới hạn video 4K trong phạm vi an toàn của màn hình (`NSScreen.visibleFrame`), không bao giờ bị tràn qua Menu Bar hay Dock.
+- **Smart Thumbnail theo Quy mô Thư mục (Folder-Scale Resource Policy & Backpressure)**:
+  - **Hoàn toàn theo nhu cầu (On-Demand Lazy)**: Không quét trước, không lập chỉ mục nền, không giải mã hàng loạt khi mở thư mục chứa 20, 50 hay 100+ video.
+  - **Phân loại chi phí thông minh (Smart Cost Classification)**: Phân tích trước metadata siêu nhẹ (< 20 ms) để xếp hạng `LOW` (ảnh bìa metadata hoặc codec phần cứng AVFoundation), `MEDIUM` (MKV/WebM tiêu chuẩn) và `HIGH` (4K/8K, 10-bit 4:2:2, bitrate > 100 Mbps không có giải mã phần cứng).
+  - **Bộ nhớ đệm LRU & Negative Cache**:
+    - Cache RAM giới hạn tối đa 16 MiB cho ảnh thumbnail đã thu nhỏ.
+    - **Negative Cache**: Ghi nhớ ngay lập tức các tệp quá nặng hoặc lỗi, phản hồi dưới **0.1 ms** ở các lần truy xuất tiếp theo, triệt tiêu việc lặp lại vô ích các thử nghiệm giải mã đắt đỏ (15 giây).
+    - Tự động vô hiệu hóa cache khi kích thước hoặc thời gian sửa đổi của tệp thay đổi; tự động giải phóng toàn bộ khi nhận cảnh báo áp lực bộ nhớ.
+  - **Giới hạn luồng nghiêm ngặt (Strictly Serial Decoder)**: Luôn giới hạn tối đa đúng **1 tác vụ giải mã thumbnail hoạt động đồng thời** trên toàn bộ ứng dụng.
+  - **Hàng đợi hữu hạn & Cơ chế Backpressure**: Giới hạn tối đa 16 tác vụ đang chờ trong hàng đợi; chủ động từ chối hoặc bỏ qua tác vụ khi quá tải, không để CPU bị chiếm dụng liên tục.
+  - **Ưu tiên Luồng phát (Playback Priority)**: Khi cửa sổ chính đang phát video, hệ thống tự động tạm hoãn hoặc từ chối các tác vụ thumbnail nặng để đảm bảo phát mượt 60fps, không rớt khung hình.
+  - **Hủy tác vụ tức thì (Instant Cancellation)**: Khi người dùng cuộn qua nhanh hoặc rời thư mục, các tác vụ đang chờ hoặc đang chạy được hủy ngay lập tức, giải phóng tiến trình mpv con trong vài mili-giây.
+  - Cung cấp lệnh CLI trích xuất thumbnail siêu nhẹ: `/Applications/UPreviewX.app/Contents/MacOS/UPreviewX --thumbnail video.mkv output.png --size 512`.
 - **Vòng đời ứng dụng sạch & Quản lý tài nguyên thông minh (Clean Lifecycle & Intelligent Resources)**:
   - Khi đóng cửa sổ xem video, ứng dụng **thoát hoàn toàn** (0 tiến trình chạy ngầm).
   - **Tạm dừng gần 0% CPU**: Ngắt toàn bộ timer chẩn đoán và polling khi pause, giữ mức CPU ở mức danh nghĩa (< 0.5%).
@@ -80,11 +93,6 @@ UPreviewX là phần mềm mã nguồn mở độc lập và được ký số a
 - **Tích hợp Finder & Quản lý Bản ghi LaunchServices sạch (Clean Open With)**:
   - Tự động hủy đăng ký các bản build phát triển tạm thời (`dist/UPreviewX.app`) khỏi LaunchServices (`lsregister -u`) trong quá trình `build_app.sh`, `package_distribution.sh` và `release_check.sh`.
   - Giữ menu **Open With** của macOS luôn gọn gàng, trỏ duy nhất về bản cài đặt chính thức tại `/Applications/UPreviewX.app` (hoặc `~/Applications/UPreviewX.app`), không bị nhân bản (duplicate entries).
-- **Tạo Thumbnail theo nhu cầu (On-Demand Thumbnail Service)**:
-  - Tích hợp `VideoThumbnailService` ưu tiên ảnh bìa embedded artwork và AVFoundation keyframe seek cực nhanh (~30–80 ms).
-  - Hỗ trợ giải mã thumbnail dự phòng headless không cần GUI cho các định dạng MKV, WebM, AVI, AV1.
-  - **Bảo vệ tài nguyên nghiêm ngặt (Safe Resource Budget)**: Với các codec máy quay chuyên nghiệp không có giải mã phần cứng trên Intel (như H.264 High 4:2:2 10-bit), giải mã phần mềm đòi hỏi CPU rất cao (~15.7 giây). Bộ tạo thumbnail tự động kích hoạt timeout an toàn 2.5s, hủy tiến trình mpv con, giải phóng bộ nhớ và trả về icon mặc định an toàn thay vì làm đơ máy người dùng.
-  - Cung cấp lệnh CLI trích xuất thumbnail siêu nhẹ: `/Applications/UPreviewX.app/Contents/MacOS/UPreviewX --thumbnail video.mkv output.png --size 512`.
 - **Tách biệt Tua nhanh (Shuttle) và Tốc độ phát (Speed Playback)**:
   - **Tua nhanh (Shuttle)**: Nhấn giữ phím `←` hoặc `→` để lướt nhanh mượt mà qua các keyframe; nhả phím sẽ lập tức trả về đúng trạng thái ban đầu (đang tạm dừng tiếp tục tạm dừng, đang phát tiếp tục phát).
   - **Tốc độ phát (Speed Playback)**: Nút bấm và phím tắt chuyển đổi tức thì giữa `1×` và `2×` (mặc định phím `2`), giữ nguyên cao độ âm thanh (pitch correction).

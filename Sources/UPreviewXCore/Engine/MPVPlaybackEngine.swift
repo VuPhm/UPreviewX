@@ -244,7 +244,7 @@ public final class MPVPlaybackEngine: PlaybackEngineProtocol {
 
         mpv_render_context_report_swap(ctx)
 
-        if !hasRenderedFirstFrameForCurrentFile && loadStartTimestamp > 0 && videoSize.width > 0 {
+        if !hasRenderedFirstFrameForCurrentFile && loadStartTimestamp > 0 {
             hasRenderedFirstFrameForCurrentFile = true
             let latencyMs = (CFAbsoluteTimeGetCurrent() - loadStartTimestamp) * 1000.0
             diagnostics.firstFrameLatencyMs = latencyMs
@@ -612,7 +612,9 @@ public final class MPVPlaybackEngine: PlaybackEngineProtocol {
             refreshDiagnostics()
 
         case MPV_EVENT_PLAYBACK_RESTART:
-            if !hasRenderedFirstFrameForCurrentFile && loadStartTimestamp > 0 {
+            // For headless mode (e.g. thumbnail extraction), signal first frame when playback restarts.
+            // For interactive GUI mode, actual frame swap in reportRenderSwap() signals first rendered frame.
+            if useNullVideoOutput && !hasRenderedFirstFrameForCurrentFile && loadStartTimestamp > 0 {
                 hasRenderedFirstFrameForCurrentFile = true
                 let latencyMs = (CFAbsoluteTimeGetCurrent() - loadStartTimestamp) * 1000.0
                 diagnostics.firstFrameLatencyMs = latencyMs

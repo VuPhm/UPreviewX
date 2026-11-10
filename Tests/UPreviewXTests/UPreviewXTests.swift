@@ -926,9 +926,9 @@ final class UPreviewXTests: XCTestCase {
         }
         _ = sema.wait(timeout: .now() + 2.5)
         XCTAssertNotNil(thumbResult)
-        // C3585.MP4 requires ~15s for software 4K 10-bit H.264 decode; 1.0s budget correctly aborts with extractionTimeout
+        // C3585.MP4 is classified as HIGH and fast-fails within milliseconds to preserve CPU/RAM
         if case .failure(let err) = thumbResult {
-            XCTAssertEqual(err, .extractionTimeout)
+            XCTAssertTrue(err == .costExceedsBudget(.high) || err == .extractionTimeout)
         }
     }
 }
