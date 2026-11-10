@@ -32,7 +32,23 @@ if [ -f "${SOURCE_FW_DIR}/libmpv.2.dylib" ]; then
 elif command -v brew >/dev/null 2>&1 && brew --prefix mpv >/dev/null 2>&1; then
     MPV_PREFIX="$(brew --prefix mpv)"
     echo "Bundling libmpv runtime libraries from Homebrew (${MPV_PREFIX})..."
-    python3 - "${MPV_PREFIX}/lib/libmpv.2.dylib" "${VENDOR_LIB_DIR}" <<'PYEOF'
+    MPV_DYLIB=""
+    if [ -f "${MPV_PREFIX}/lib/libmpv.2.dylib" ]; then
+        MPV_DYLIB="${MPV_PREFIX}/lib/libmpv.2.dylib"
+    elif [ -f "${MPV_PREFIX}/lib/libmpv.dylib" ]; then
+        MPV_DYLIB="${MPV_PREFIX}/lib/libmpv.dylib"
+    elif [ -f "/usr/local/lib/libmpv.2.dylib" ]; then
+        MPV_DYLIB="/usr/local/lib/libmpv.2.dylib"
+    elif [ -f "/usr/local/lib/libmpv.dylib" ]; then
+        MPV_DYLIB="/usr/local/lib/libmpv.dylib"
+    fi
+
+    if [ -z "${MPV_DYLIB}" ]; then
+        echo "Error: Could not find libmpv.2.dylib or libmpv.dylib in Homebrew prefix: ${MPV_PREFIX}" >&2
+        exit 1
+    fi
+
+    python3 - "${MPV_DYLIB}" "${VENDOR_LIB_DIR}" <<'PYEOF'
 import os, shutil, subprocess, sys
 
 root_dylib = os.path.realpath(sys.argv[1])

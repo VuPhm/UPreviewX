@@ -175,10 +175,11 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
             } else if arg == "--thumbnail" && idx + 2 < args.count {
                 let inputURL = URL(fileURLWithPath: args[idx + 1])
                 let outputURL = URL(fileURLWithPath: args[idx + 2])
-                idx += 2
                 var targetDim: CGFloat = 512
-                if idx + 2 < args.count && args[idx + 1] == "--size", let dim = Double(args[idx + 2]) {
+                if idx + 4 < args.count && args[idx + 3] == "--size", let dim = Double(args[idx + 4]) {
                     targetDim = CGFloat(dim)
+                    idx += 4
+                } else {
                     idx += 2
                 }
                 let res = VideoThumbnailService.shared.generateThumbnailToFile(
